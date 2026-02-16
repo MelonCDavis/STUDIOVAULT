@@ -1,6 +1,8 @@
 import { NavLink } from "react-router-dom";
+import { useStaffAuth } from "../../context/StaffAuthContext";
 
 export default function StaffSidebar({ sidebarOpen, setSidebarOpen }) {
+    const { role } = useStaffAuth();
     return (
         <>
           {/* Overlay (mobile only) */}
@@ -53,14 +55,16 @@ export default function StaffSidebar({ sidebarOpen, setSidebarOpen }) {
                         Clients
                     </NavLink>
 
-                    <NavLink
-                      to="/staff/approvals"
-                      end
-                      onClick={() => setSidebarOpen(false)}
-                      className="px-3 py-2 rounded hover:bg-neutral-800"
-                    >
-                        Approvals
-                    </NavLink>
+                    {role !== "ARTIST" && (
+                        <NavLink
+                        to="/staff/approvals"
+                        end
+                        onClick={() => setSidebarOpen(false)}
+                        className="px-3 py-2 rounded hover:bg-neutral-800"
+                        >
+                            Approvals
+                        </NavLink>
+                    )}
 
                     <NavLink
                       to="/staff/inspection"

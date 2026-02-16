@@ -1,12 +1,12 @@
 import { Routes, Route } from "react-router-dom";
 import StaffLayout from "../layout/StaffLayout";
+import { StaffAuthProvider } from "../../context/StaffAuthContext";
+import RequireRole from "../components/RequireRole";
+import RequireStaffAuth from "../components/RequireStaffAuth";
+import CalendarPage from "../pages/CalendarPage";
 
 function Dashboard() {
     return<div>Dashboard</div>;
-}
-
-function Calendar() {
-    return<div>Calendar</div>;
 }
 
 function Clients() {
@@ -23,14 +23,30 @@ function Inspection() {
 
 export default function StaffRoutes() {
     return (
-        <Routes>
-            <Route path="/" element={<StaffLayout />} >
-                <Route index element={<Dashboard />} />
-                <Route path="calendar" element={<Calendar />} />
-                <Route path="clients" element={<Clients />}  />
-                <Route path="approvals" element={<Approvals />}  />
-                <Route path="inspection" element={<Inspection />}  />
-            </Route>
-        </Routes>
+        <StaffAuthProvider>
+            <Routes>
+                <Route
+                  path=""
+                  element={
+                    <RequireStaffAuth>
+                    <StaffLayout />
+                    </RequireStaffAuth>
+                  }
+                >
+                    <Route index element={<Dashboard />} />
+                    <Route path="calendar" element={<CalendarPage />} />
+                    <Route path="clients" element={<Clients />}  />
+                    <Route 
+                      path="approvals"
+                      element={
+                        <RequireRole allowedRoles={["MANAGER", "OWNER"]}>
+                          <Approvals />
+                        </RequireRole>
+                      }
+                    />
+                    <Route path="inspection" element={<Inspection />}  />
+                </Route>
+            </Routes>
+        </StaffAuthProvider>
     );
 }
