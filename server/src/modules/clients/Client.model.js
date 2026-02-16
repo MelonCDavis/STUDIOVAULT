@@ -7,11 +7,17 @@ const ClientSchema = new mongoose.Schema(
             required: true, 
             index: true,
         },
-        dateOfBirth: {
-            type: Date,
+        isAdult: {
+            type: Boolean,
             required: true,
-            index: true,
-        },
+            },
+
+            dateOfBirth: {
+            type: Date,
+            required: function () {
+                return this.isAdult === false;
+            },
+            },
         phoneE164: {
             type: String,
             required: true,

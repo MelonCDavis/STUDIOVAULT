@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { apiGet, apiPost, apiDelete, apiPatch } from "../../services/apiClient";
 
 function getDaysInMonth(year, month) {
     return new Date(year, month +1, 0).getDate();
@@ -8,17 +9,69 @@ function getFirstDayOfMonth(year, month) {
     return new Date(year, month, 1).getDay();
 }
 
+function isSameDay(a, b) {
+    if (!a || !b) return false;
+    return a.toDateString() === b.toDateString();
+}
+
+function hourLabel(hour) {
+    return `${hour}:00`;
+}
+
+function overlaps(startA, endA, startB, endB) {
+  return startA < endB && startB < endA;
+}
+
+function makeBookingId() {
+  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 export default function CalendarPage() {
+    // TEMP — replace with real context later
+    const STUDIO_ID = "69936f65681b262ca3739f92";
+    const ARTIST_ID = "69936f65681b262ca3739f95";
+    const SERVICE_ID = "69936f65681b262ca3739f97";
+
     const today = new Date();
     const [currentDate, setCurrentDate] = useState(
         new Date(today.getFullYear(), today.getMonth(), 1)
     );
+    const [bookingDraft, setBookingDraft] = useState(null);
+    const [deleteTargetId, setDeleteTargetId] = useState(null);
 
     const [selectedDate, setSelectedDate] = useState(null);
     const [viewMode, setViewMode] = useState("month");
 
     const [focusedSlot, setFocusedSlot] = useState(null);
     const [pendingBooking, setPendingBooking] = useState(null);
+    const [confirmedBookings, setConfirmedBookings] = useState([]);
+
+      async function fetchAppointmentsInRange(fromDate, toDate) {
+        try {
+          const res = await apiGet(
+            `/api/staff/appointments?studioId=${STUDIO_ID}&artistProfileId=${ARTIST_ID}&from=${fromDate.toISOString()}&to=${toDate.toISOString()}`
+          );
+
+          // Convert dates from ISO strings to Date objects
+          const normalized = res.map((a) => ({
+            id: a._id,
+            start: new Date(a.startsAt),
+            end: new Date(a.endsAt),
+
+            status: a.status,
+
+            clientName: a.clientId?.legalName || "",
+            phone: a.clientId?.phoneE164 || "",
+            email: a.clientId?.email || "",
+            service: a.serviceId?.name || "",
+            notes: a.notesInternal || "",
+          }));
+
+          setConfirmedBookings(normalized);
+        } catch (err) {
+          console.error("Fetch appointments failed", err);
+        }
+    }
 
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -41,6 +94,8 @@ export default function CalendarPage() {
 
     const handleDayClick = (dayNumber) => {
         setSelectedDate(new Date(year, month, dayNumber));
+        setFocusedSlot(null);
+        setBookingDraft(null);
     }
 
     const referenceDate = selectedDate || today;
@@ -57,30 +112,87 @@ export default function CalendarPage() {
     const START_HOUR = 8;
     const END_HOUR = 24;
 
-    const hours = Array.from(
-    { length: END_HOUR - START_HOUR },
-    (_, i) => START_HOUR + i
-    );
+    const timeSlots = [];
+
+    for (let hour = START_HOUR; hour < END_HOUR; hour++) {
+      for (let minute of [0, 15, 30, 45]) {
+        timeSlots.push({ hour, minute });
+      }
+    }
+
 
     const weekScrollRef = useRef(null);
 
-    const handleTimeSlotClick = (dateObj, hour) => {
-      const newDate = new Date(dateObj);
-      newDate.setHours(hour, 0, 0, 0);
-      setFocusedSlot(newDate);
+    const handleTimeSlotClick = (dateObj, hour, minute = 0) => {
+      const start = new Date(dateObj);
+      start.setHours(hour, minute, 0, 0);
+
+      const existingBooking = confirmedBookings.find((b) =>
+        isSameDay(b.start, start) &&
+        overlaps(
+          start,
+          new Date(start.getTime() + 15 * 60000),
+          b.start,
+          b.end
+        )
+      );
+
+      setFocusedSlot(start);
+
+      if (existingBooking) {
+        setBookingDraft(null);
+      } else {
+        setBookingDraft({
+          start,
+          hours: 1,
+          minutes: 0,
+          clientName: "",
+          phone: "",
+          email: "",
+          service: "",
+          notes: "",
+          status: "booked",
+          isAdult: true,
+          dateOfBirth: "",
+        });
+      }
     };
 
     const activeDate = focusedSlot || selectedDate;
 
     useEffect(() => {
         if (viewMode === "week" && weekScrollRef.current) {
-          const slotHeight = 64; 
+          const slotHeight = 16 * 4; 
           const defaultHour = 12;
           const scrollTo = (defaultHour - START_HOUR) * slotHeight;
 
           weekScrollRef.current.scrollTop = scrollTo;
         }
     }, [viewMode]);
+
+    useEffect(() => {
+        if (!pendingBooking) return;
+
+        function onKeyDown(e) {
+            if (e.key === "Escape") setPendingBooking(null);
+        }
+
+        document.addEventListener("keydown", onKeyDown);
+        return () => document.removeEventListener("keydown", onKeyDown);
+        }, [pendingBooking]);
+
+    const dayBookings = activeDate
+      ? confirmedBookings
+        .filter((b) => isSameDay(b.start, activeDate))
+        .sort((a, b) => a.start - b.start)
+      : [];
+
+      useEffect(() => {
+        const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
+        const rangeEnd = new Date(year, month + 1, 0, 23, 59 ,59, 999);
+
+        fetchAppointmentsInRange(rangeStart, rangeEnd);
+      }, [year, month]);
 
     return (
         <div className="space-y-6 lg:grid lg:grid-cols-3 lg:gap-6 lg:space-y-0">
@@ -206,7 +318,11 @@ export default function CalendarPage() {
                     >
                       {/* Day Header */}
                       <div
-                        onClick={() => setSelectedDate(dateObj)}
+                        onClick={() => {
+                          setSelectedDate(dateObj);
+                          setFocusedSlot(null);
+                          setBookingDraft(null);
+                        }}
                           className={`
                           p-2
                           text-sm
@@ -232,32 +348,61 @@ export default function CalendarPage() {
                       <div 
                         ref={weekScrollRef}
                         className="flex-1 overflow-y-auto divide-y divide-neutral-800">
-                        {hours.map((hour) => {
-                          const isSelectedHour =
+                        {timeSlots.map(({ hour, minute }) => {
+                          const slotStart = new Date(dateObj);
+                          slotStart.setHours(hour, minute, 0, 0);
+
+                          const slotEnd = new Date(slotStart.getTime() + 15 * 60000);
+
+                          const isSelected =
                             focusedSlot &&
                             focusedSlot.getHours() === hour &&
+                            focusedSlot.getMinutes() === minute &&
                             dateObj.toDateString() === focusedSlot.toDateString();
+
+                          const bookingInSlot = confirmedBookings.find((b) =>
+                            isSameDay(b.start, slotStart) &&
+                            overlaps(slotStart, slotEnd, b.start, b.end)
+                          );
 
                           return (
                             <div
-                              key={hour}
-                              onClick={() => handleTimeSlotClick(dateObj, hour)}
+                              key={`${hour}-${minute}`}
+                              onClick={() => handleTimeSlotClick(dateObj, hour, minute)}
                               className={`
-                                h-16
+                                h-4
                                 px-2
-                                text-xs
+                                text-[10px]
                                 flex
-                                items-start
+                                items-center
                                 cursor-pointer
                                 transition
                                 ${
-                                  isSelectedHour
+                                isSelected
                                     ? "bg-neutral-700 text-neutral-200"
                                     : "text-neutral-500 hover:bg-neutral-800"
                                 }
                               `}
                             >
-                              {hour}:00
+                            <div className="flex justify-between w-full">
+                                <span
+                                  className={
+                                    minute === 0
+                                      ? "text-[10px] text-neutral-400"
+                                      : "text-[9px] text-neutral-600 pl-4"
+                                  }
+                                >
+                                  {minute === 0
+                                    ? `${hour}:00`
+                                    : `${minute}`}
+                                </span>
+
+                                {bookingInSlot && (
+                                  <span className="text-[9px] px-1 rounded bg-neutral-800 text-neutral-200">
+                                    {bookingInSlot.status}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
@@ -268,7 +413,7 @@ export default function CalendarPage() {
               </div>
             )}
           </div>
-          {/* Selected Day Panel */}
+            {/* Selected Day Panel */}
             {activeDate && (
               <div className="border border-neutral-800 rounded bg-neutral-900 p-4 space-y-4">
                 <h3 className="text-sm text-neutral-400 uppercase tracking-wide">
@@ -282,10 +427,366 @@ export default function CalendarPage() {
                     year: "numeric",
                     })}
                 </div>
-                <div className="border-t border-neutral-800 pt-4 text-sm text-neutral-400">
-                  No bookings yet.
+                <div className="border-t border-neutral-800 pt-4 space-y-2">
+                  {dayBookings.length === 0 ? (
+                    <div className="text-sm text-neutral-400">No bookings yet.</div>
+                  ) : (
+                    dayBookings.map((b) => (
+                      <div
+                        key={b.id}
+                        className="rounded border border-neutral-800 bg-neutral-950 px-3 py-2"
+                      >
+                        <div className="text-xs text-neutral-400">
+                          {b.start.getHours()}:
+                          {b.start.getMinutes().toString().padStart(2, "0")}
+                          {" – "}
+                          {b.end.getHours()}:
+                          {b.end.getMinutes().toString().padStart(2, "0")}
+                        </div>
+                        <div className="rounded border border-neutral-800 bg-neutral-950 px-3 py-3 space-y-2">
+                          <div className="text-xs text-neutral-400">
+                            {b.start.getHours()}:00 – {b.end.getHours()}:00
+                          </div>
+
+                          <div className="text-sm text-neutral-200 font-semibold">
+                            {b.service || "Appointment"}
+                          </div>
+
+                          <div className="text-xs text-neutral-400 capitalize">
+                            Status: {b.status || "booked"}
+                          </div>
+
+                          {b.clientName && (
+                            <div className="text-xs text-neutral-300">
+                              Client: {b.clientName}
+                            </div>
+                          )}
+
+                          {b.phone && (
+                            <div className="text-xs text-neutral-400">
+                              Phone: {b.phone}
+                            </div>
+                          )}
+
+                          {b.email && (
+                            <div className="text-xs text-neutral-400">
+                              Email: {b.email}
+                            </div>
+                          )}
+
+                          {b.notes && (
+                            <div className="text-xs text-neutral-500 pt-1 border-t border-neutral-800">
+                              {b.notes}
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => {
+                            setBookingDraft({
+                                id: b.id,
+                                start: b.start,
+                                hours: Math.floor((b.end - b.start) / 3600000),
+                                minutes:
+                                ((b.end - b.start) % 3600000) / 60000,
+                                clientName: b.clientName,
+                                phone: b.phone,
+                                email: b.email,
+                                service: b.service,
+                                notes: b.notes,
+                              });
+                            }}
+                            className="mt-2 text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                          >
+                            Edit
+                          </button>
+                          {deleteTargetId === b.id ? (
+                            <div className="mt-2 flex gap-2 items-center">
+                                <span className="text-xs text-red-400">Confirm delete?</span>
+
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                        await apiDelete(`/api/staff/appointments/${b.id}`);
+
+                                        const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
+                                        const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
+
+                                        await fetchAppointmentsInRange(rangeStart, rangeEnd);
+
+                                        setDeleteTargetId(null);
+                                    } catch (err) {
+                                        console.error("Delete failed", err);
+                                    }
+                                  }}
+                                  className="text-xs px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
+                                >
+                                  Yes
+                                </button>
+
+                                <button
+                                  onClick={() => setDeleteTargetId(null)}
+                                  className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setDeleteTargetId(b.id)}
+                                className="mt-2 text-xs px-3 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
+                              >
+                                Delete
+                              </button>
+                            )}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
-              </div> 
+                {bookingDraft && isSameDay(bookingDraft.start, activeDate) && (
+                  <div className="pt-4 border-t border-neutral-800 space-y-4">
+
+                    <div className="text-sm text-neutral-400">
+                      {bookingDraft.start.getHours()}:
+                      {bookingDraft.start.getMinutes().toString().padStart(2, "0")} selected
+                    </div>
+
+                    {/* Duration Selectors */}
+                    <div className="flex gap-4">
+                      <div className="flex flex-col">
+                        <label className="text-xs text-neutral-400 mb-1">Hours</label>
+                        <select
+                          value={bookingDraft.hours}
+                          onChange={(e) =>
+                            setBookingDraft((prev) => ({
+                              ...prev,
+                              hours: parseInt(e.target.value, 10),
+                            }))
+                          }
+                          className="bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                       >
+                          {Array.from({ length: 13 }).map((_, i) => (
+                            <option key={i} value={i}>
+                              {i}
+                            </option>
+                          ))}
+                        </select>
+                    </div>
+
+                    <div className="flex flex-col">
+                        <label className="text-xs text-neutral-400 mb-1">Minutes</label>
+                        <select
+                          value={bookingDraft.minutes}
+                          onChange={(e) =>
+                            setBookingDraft((prev) => ({
+                              ...prev,
+                              minutes: parseInt(e.target.value, 10),
+                            }))
+                          }
+                          className="bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                        >
+                          {[0, 15, 30, 45].map((m) => (
+                            <option key={m} value={m}>
+                              {m.toString().padStart(2, "0")}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Client Info */}
+                    <input
+                      placeholder="Client Name"
+                      value={bookingDraft.clientName}
+                      onChange={(e) =>
+                        setBookingDraft((prev) => ({
+                          ...prev,
+                          clientName: e.target.value,
+                        }))
+                      }
+                      className="w-full bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                    />
+
+                    <input
+                      placeholder="Phone"
+                      value={bookingDraft.phone}
+                      onChange={(e) =>
+                        setBookingDraft((prev) => ({
+                         ...prev,
+                          phone: e.target.value,
+                        }))
+                      }
+                      className="w-full bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                    />
+
+                    <input
+                      placeholder="Email"
+                      value={bookingDraft.email}
+                      onChange={(e) =>
+                        setBookingDraft((prev) => ({
+                          ...prev,
+                          email: e.target.value,
+                        }))
+                      }
+                      className="w-full bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                    />
+
+                    <textarea
+                      placeholder="Service Description"
+                      value={bookingDraft.service}
+                      onChange={(e) =>
+                        setBookingDraft((prev) => ({
+                          ...prev,
+                          service: e.target.value,
+                        }))
+                      }
+                      className="w-full bg-neutral-800 border border-neutral-700 text-xs p-2 rounded resize-none"
+                      rows={4}
+                    />
+
+                    <div className="flex gap-4 items-center">
+                      <label className="text-xs text-neutral-400">
+                        Over 18?
+                      </label>
+
+                      <select
+                        value={bookingDraft.isAdult ? "yes" : "no"}
+                        onChange={(e) =>
+                          setBookingDraft((prev) => ({
+                            ...prev,
+                            isAdult: e.target.value === "yes",
+                          }))
+                        }
+                        className="bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                      >
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </div>
+
+                    {!bookingDraft.isAdult && (
+                      <input
+                        type="date"
+                        value={bookingDraft.dateOfBirth}
+                        onChange={(e) =>
+                          setBookingDraft((prev) => ({
+                            ...prev,
+                            dateOfBirth: e.target.value,
+                          }))
+                        }
+                        className="w-full bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                      />
+                    )}
+
+                    <textarea
+                      placeholder="Notes"
+                      value={bookingDraft.notes}
+                      onChange={(e) =>
+                        setBookingDraft((prev) => ({
+                          ...prev,
+                          notes: e.target.value,
+                        }))
+                      }
+                      className="w-full bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                      rows={3}
+                    />
+
+                    {/* Status Selector */}
+                    <div className="flex gap-3 items-center">
+                      <label className="text-xs text-neutral-400">Status</label>
+                      <select
+                        value={bookingDraft.status}
+                        onChange={(e) =>
+                          setBookingDraft((prev) => ({
+                            ...prev,
+                            status: e.target.value,
+                          }))
+                        }
+                        className="bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
+                    >
+                        <option value="booked">Booked</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </div>
+
+                    {(() => {
+                      const start = bookingDraft.start;
+                      const durationMs =
+                        bookingDraft.hours * 60 * 60000 +
+                        bookingDraft.minutes * 60000;
+
+                      const end = new Date(start.getTime() + durationMs);
+
+                      const hasConflict = confirmedBookings.some((b) =>
+                        b.id !== bookingDraft.id &&
+                        isSameDay(b.start, start) &&
+                        overlaps(start, end, b.start, b.end)
+                      );
+
+                    return hasConflict ? (
+                        <div className="text-sm text-red-400">
+                          This time range conflicts with an existing booking.
+                        </div>
+                    ) : (
+                        <button
+                          onClick={async () => {
+                            const durationMs =
+                                bookingDraft.hours * 60 * 60000 +
+                                bookingDraft.minutes * 60000;
+
+                            const end = new Date(
+                                bookingDraft.start.getTime() + durationMs
+                            );
+
+                            const payload = {
+                                studioId: STUDIO_ID,
+                                artistProfileId: ARTIST_ID,
+                                serviceId: SERVICE_ID,
+                                startsAt: bookingDraft.start.toISOString(),
+                                endsAt: end.toISOString(),
+                                status: bookingDraft.status?.toUpperCase() || "BOOKED",
+                                notesInternal: bookingDraft.notes,
+                            };
+
+                            // If no selected clientId, send inline data
+                            if (!bookingDraft.selectedClientId) {
+                                payload.clientName = bookingDraft.clientName;
+                                payload.phone = bookingDraft.phone;
+                                payload.email = bookingDraft.email;
+                                payload.isAdult = bookingDraft.isAdult;
+
+                                if (!bookingDraft.isAdult) {
+                                    payload.dateOfBirth = bookingDraft.dateOfBirth;
+                                }
+                            } else {
+                                payload.clientId = bookingDraft.selectedClientId;
+                            }
+
+                            try {
+                                await apiPost("/api/staff/appointments", payload);
+
+                                const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
+                                const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
+
+                                await fetchAppointmentsInRange(rangeStart, rangeEnd);
+
+                                setBookingDraft(null);
+                                setFocusedSlot(null);
+                            } catch (err) {
+                                console.error(err);
+                                alert("Booking failed");
+                            }
+                          }}
+                          className="w-full px-3 py-2 text-xs rounded bg-neutral-700 hover:bg-neutral-600"
+                        >
+                          Confirm Booking
+                        </button>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
             )}
         </div>
     );
