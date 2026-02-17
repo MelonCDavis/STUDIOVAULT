@@ -14,16 +14,18 @@ function isSameDay(a, b) {
     return a.toDateString() === b.toDateString();
 }
 
-function hourLabel(hour) {
-    return `${hour}:00`;
-}
-
 function overlaps(startA, endA, startB, endB) {
   return startA < endB && startB < endA;
 }
 
-function makeBookingId() {
-  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+function toUiStatus(apiStatus) {
+  if (!apiStatus) return "booked";
+  return String(apiStatus).toLowerCase(); // BOOKED -> booked, CHECKED_IN -> checked_in
+}
+
+function toApiStatus(uiStatus) {
+  if (!uiStatus) return "BOOKED";
+  return String(uiStatus).toUpperCase().trim(); // checked_in -> CHECKED_IN
 }
 
 export default function CalendarPage() {
@@ -38,40 +40,44 @@ export default function CalendarPage() {
     );
     const [bookingDraft, setBookingDraft] = useState(null);
     const [deleteTargetId, setDeleteTargetId] = useState(null);
+    const [sidebarMode, setSidebarMode] = useState(null);
 
     const [selectedDate, setSelectedDate] = useState(null);
     const [viewMode, setViewMode] = useState("month");
 
     const [focusedSlot, setFocusedSlot] = useState(null);
-    const [pendingBooking, setPendingBooking] = useState(null);
     const [confirmedBookings, setConfirmedBookings] = useState([]);
 
       async function fetchAppointmentsInRange(fromDate, toDate) {
         try {
-          const res = await apiGet(
-            `/api/staff/appointments?studioId=${STUDIO_ID}&artistProfileId=${ARTIST_ID}&from=${fromDate.toISOString()}&to=${toDate.toISOString()}`
-          );
+            const res = await apiGet(
+              `/api/staff/appointments?studioId=${STUDIO_ID}&artistProfileId=${ARTIST_ID}&from=${fromDate.toISOString()}&to=${toDate.toISOString()}`
+            );
 
-          // Convert dates from ISO strings to Date objects
-          const normalized = res.map((a) => ({
-            id: a._id,
-            start: new Date(a.startsAt),
-            end: new Date(a.endsAt),
+            if (!res) {
+              setConfirmedBookings([]);
+              return;
+            }
 
-            status: a.status,
+            const normalized = res.map((a) => ({
+              id: a._id,
+              start: new Date(a.startsAt),
+              end: new Date(a.endsAt),
+              status: a.status,
+              uiStatus: toUiStatus(a.status),
+              clientName: a.clientId?.legalName || "",
+              phone: a.clientId?.phoneE164 || "",
+              email: a.clientId?.email || "",
+              service: a.serviceId?.name || "",
+              notes: a.notesInternal || "",
+            }));
 
-            clientName: a.clientId?.legalName || "",
-            phone: a.clientId?.phoneE164 || "",
-            email: a.clientId?.email || "",
-            service: a.serviceId?.name || "",
-            notes: a.notesInternal || "",
-          }));
-
-          setConfirmedBookings(normalized);
-        } catch (err) {
-          console.error("Fetch appointments failed", err);
+            setConfirmedBookings(normalized);
+          } catch (err) {
+            console.error("Fetch appointments failed", err);
+            setConfirmedBookings([]); // prevent stale state
+          }
         }
-    }
 
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -96,6 +102,7 @@ export default function CalendarPage() {
         setSelectedDate(new Date(year, month, dayNumber));
         setFocusedSlot(null);
         setBookingDraft(null);
+        setSidebarMode("day");
     }
 
     const referenceDate = selectedDate || today;
@@ -128,6 +135,7 @@ export default function CalendarPage() {
       start.setHours(hour, minute, 0, 0);
 
       const existingBooking = confirmedBookings.find((b) =>
+        !["CANCELLED", "NO_SHOW"].includes(b.status) &&
         isSameDay(b.start, start) &&
         overlaps(
           start,
@@ -137,11 +145,38 @@ export default function CalendarPage() {
         )
       );
 
-      setFocusedSlot(start);
+      setSidebarMode("appointment");
 
       if (existingBooking) {
-        setBookingDraft(null);
-      } else {
+        setFocusedSlot(existingBooking.start);
+        setSelectedDate(existingBooking.start);
+        setSidebarMode("appointment");
+
+        setBookingDraft({
+            id: existingBooking.id,
+            start: existingBooking.start,
+            hours: Math.floor((existingBooking.end - existingBooking.start) / 3600000),
+            minutes: ((existingBooking.end - existingBooking.start) % 3600000) / 60000,
+
+            clientName: existingBooking.clientName,
+            phone: existingBooking.phone,
+            email: existingBooking.email,
+            service: existingBooking.service,
+            notes: existingBooking.notes,
+
+            status: toUiStatus(existingBooking.status), // <-- lower UI value
+            isAdult: true,
+            dateOfBirth: "",
+          });
+
+          return;
+        }
+
+        // empty slot → new draft
+        setFocusedSlot(start);
+        setSelectedDate(start);
+        setSidebarMode("appointment");
+
         setBookingDraft({
           start,
           hours: 1,
@@ -155,7 +190,6 @@ export default function CalendarPage() {
           isAdult: true,
           dateOfBirth: "",
         });
-      }
     };
 
     const activeDate = focusedSlot || selectedDate;
@@ -170,20 +204,10 @@ export default function CalendarPage() {
         }
     }, [viewMode]);
 
-    useEffect(() => {
-        if (!pendingBooking) return;
-
-        function onKeyDown(e) {
-            if (e.key === "Escape") setPendingBooking(null);
-        }
-
-        document.addEventListener("keydown", onKeyDown);
-        return () => document.removeEventListener("keydown", onKeyDown);
-        }, [pendingBooking]);
-
     const dayBookings = activeDate
       ? confirmedBookings
         .filter((b) => isSameDay(b.start, activeDate))
+        .filter((b) => !["CANCELLED", "NO_SHOW"].includes(b.status))
         .sort((a, b) => a.start - b.start)
       : [];
 
@@ -322,6 +346,7 @@ export default function CalendarPage() {
                           setSelectedDate(dateObj);
                           setFocusedSlot(null);
                           setBookingDraft(null);
+                          setSidebarMode("day");
                         }}
                           className={`
                           p-2
@@ -361,6 +386,7 @@ export default function CalendarPage() {
                             dateObj.toDateString() === focusedSlot.toDateString();
 
                           const bookingInSlot = confirmedBookings.find((b) =>
+                            !["CANCELLED", "NO_SHOW"].includes(b.status) &&
                             isSameDay(b.start, slotStart) &&
                             overlaps(slotStart, slotEnd, b.start, b.end)
                           );
@@ -427,126 +453,144 @@ export default function CalendarPage() {
                     year: "numeric",
                     })}
                 </div>
-                <div className="border-t border-neutral-800 pt-4 space-y-2">
-                  {dayBookings.length === 0 ? (
-                    <div className="text-sm text-neutral-400">No bookings yet.</div>
-                  ) : (
-                    dayBookings.map((b) => (
-                      <div
-                        key={b.id}
-                        className="rounded border border-neutral-800 bg-neutral-950 px-3 py-2"
-                      >
-                        <div className="text-xs text-neutral-400">
-                          {b.start.getHours()}:
-                          {b.start.getMinutes().toString().padStart(2, "0")}
-                          {" – "}
-                          {b.end.getHours()}:
-                          {b.end.getMinutes().toString().padStart(2, "0")}
-                        </div>
-                        <div className="rounded border border-neutral-800 bg-neutral-950 px-3 py-3 space-y-2">
-                          <div className="text-xs text-neutral-400">
-                            {b.start.getHours()}:00 – {b.end.getHours()}:00
-                          </div>
-
-                          <div className="text-sm text-neutral-200 font-semibold">
-                            {b.service || "Appointment"}
-                          </div>
-
-                          <div className="text-xs text-neutral-400 capitalize">
-                            Status: {b.status || "booked"}
-                          </div>
-
-                          {b.clientName && (
-                            <div className="text-xs text-neutral-300">
-                              Client: {b.clientName}
-                            </div>
-                          )}
-
-                          {b.phone && (
+                {sidebarMode === "day" && (
+                  <div className="border-t border-neutral-800 pt-4 space-y-2">
+                    {dayBookings.length === 0 ? (
+                        <div className="text-sm text-neutral-400">No bookings yet.</div>
+                    ) : (
+                        dayBookings.map((b) => (
+                        <div
+                            key={b.id}
+                            className="rounded border border-neutral-800 bg-neutral-950 px-3 py-2"
+                        >
                             <div className="text-xs text-neutral-400">
-                              Phone: {b.phone}
+                            {b.start.getHours()}:
+                            {b.start.getMinutes().toString().padStart(2, "0")}
+                            {" – "}
+                            {b.end.getHours()}:
+                            {b.end.getMinutes().toString().padStart(2, "0")}
                             </div>
-                          )}
-
-                          {b.email && (
-                            <div className="text-xs text-neutral-400">
-                              Email: {b.email}
+                            <div className="rounded border border-neutral-800 bg-neutral-950 px-3 py-3 space-y-2">
+                            
+                            <div className="text-sm text-neutral-200 font-semibold">
+                                {b.service || "Appointment"}
                             </div>
-                          )}
 
-                          {b.notes && (
-                            <div className="text-xs text-neutral-500 pt-1 border-t border-neutral-800">
-                              {b.notes}
+                            <div className="text-xs text-neutral-400 capitalize">
+                                Status: {b.status || "booked"}
                             </div>
-                          )}
 
-                          <button
-                            onClick={() => {
-                            setBookingDraft({
-                                id: b.id,
-                                start: b.start,
-                                hours: Math.floor((b.end - b.start) / 3600000),
-                                minutes:
-                                ((b.end - b.start) % 3600000) / 60000,
-                                clientName: b.clientName,
-                                phone: b.phone,
-                                email: b.email,
-                                service: b.service,
-                                notes: b.notes,
-                              });
-                            }}
-                            className="mt-2 text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
-                          >
-                            Edit
-                          </button>
-                          {deleteTargetId === b.id ? (
-                            <div className="mt-2 flex gap-2 items-center">
-                                <span className="text-xs text-red-400">Confirm delete?</span>
-
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                        await apiDelete(`/api/staff/appointments/${b.id}`);
-
-                                        const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
-                                        const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
-
-                                        await fetchAppointmentsInRange(rangeStart, rangeEnd);
-
-                                        setDeleteTargetId(null);
-                                    } catch (err) {
-                                        console.error("Delete failed", err);
-                                    }
-                                  }}
-                                  className="text-xs px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
-                                >
-                                  Yes
-                                </button>
-
-                                <button
-                                  onClick={() => setDeleteTargetId(null)}
-                                  className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() => setDeleteTargetId(b.id)}
-                                className="mt-2 text-xs px-3 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
-                              >
-                                Delete
-                              </button>
+                            {b.clientName && (
+                                <div className="text-xs text-neutral-300">
+                                Client: {b.clientName}
+                                </div>
                             )}
+
+                            {b.phone && (
+                                <div className="text-xs text-neutral-400">
+                                Phone: {b.phone}
+                                </div>
+                            )}
+
+                            {b.email && (
+                                <div className="text-xs text-neutral-400">
+                                Email: {b.email}
+                                </div>
+                            )}
+
+                            {b.notes && (
+                                <div className="text-xs text-neutral-500 pt-1 border-t border-neutral-800">
+                                {b.notes}
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => {
+                                setSidebarMode("appointment");
+                                setFocusedSlot(b.start);
+                                setSelectedDate(b.start);
+
+                                setBookingDraft({
+                                    id: b.id,
+                                    start: b.start,
+                                    hours: Math.floor((b.end - b.start) / 3600000),
+                                    minutes:
+                                    ((b.end - b.start) % 3600000) / 60000,
+                                    clientName: b.clientName,
+                                    phone: b.phone,
+                                    email: b.email,
+                                    service: b.service,
+                                    notes: b.notes,
+                                    isAdult: true,
+                                    dateOfBirth: "",
+                                    status: toUiStatus(b.status),
+                                });
+                                }}
+                                className="mt-2 text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                            >
+                                Edit
+                            </button>
+                            {deleteTargetId === b.id ? (
+                                <div className="mt-2 flex gap-2 items-center">
+                                    <span className="text-xs text-red-400">Confirm delete?</span>
+
+                                    <button
+                                    onClick={async () => {
+                                        try {
+                                            await apiDelete(`/api/staff/appointments/${b.id}`);
+
+                                            const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
+                                            const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
+
+                                            await fetchAppointmentsInRange(rangeStart, rangeEnd);
+
+                                            setDeleteTargetId(null);
+                                        } catch (err) {
+                                            console.error("Delete failed", err);
+                                        }
+                                    }}
+                                    className="text-xs px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
+                                    >
+                                    Yes
+                                    </button>
+
+                                    <button
+                                    onClick={() => setDeleteTargetId(null)}
+                                    className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                                    >
+                                    Cancel
+                                    </button>
+                                </div>
+                                ) : (
+                                <button
+                                    onClick={() => setDeleteTargetId(b.id)}
+                                    className="mt-2 text-xs px-3 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
+                                >
+                                    Delete
+                                </button>
+                                )}
+                            </div>
                         </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-                {bookingDraft && isSameDay(bookingDraft.start, activeDate) && (
-                  <div className="pt-4 border-t border-neutral-800 space-y-4">
+                        ))
+                    )}
+                  </div>
+                )}
+                {sidebarMode === "appointment" && bookingDraft && isSameDay(bookingDraft.start, activeDate) && (
+                  <div className="pt-4 border-t border-neutral-800 space-y-4 transition-opacity duration-150">
 
                     <div className="text-sm text-neutral-400">
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => {
+                                setSidebarMode("day");
+                                setBookingDraft(null);
+                                setFocusedSlot(null);
+                                }}
+                                className="text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                            >
+                                Back to day
+                            </button>
+                        </div>
                       {bookingDraft.start.getHours()}:
                       {bookingDraft.start.getMinutes().toString().padStart(2, "0")} selected
                     </div>
@@ -704,9 +748,12 @@ export default function CalendarPage() {
                         }
                         className="bg-neutral-800 border border-neutral-700 text-xs p-2 rounded"
                     >
+                        <option value="held">Held</option>
                         <option value="booked">Booked</option>
+                        <option value="checked_in">Checked In</option>
                         <option value="completed">Completed</option>
                         <option value="cancelled">Cancelled</option>
+                        <option value="no_show">No Show</option>
                       </select>
                     </div>
 
@@ -723,6 +770,11 @@ export default function CalendarPage() {
                         isSameDay(b.start, start) &&
                         overlaps(start, end, b.start, b.end)
                       );
+                      
+                      const needsNote =
+                        bookingDraft.status === "cancelled" || bookingDraft.status === "no_show";
+
+                      const hasNote = (bookingDraft.notes || "").trim().length > 0;
 
                     return hasConflict ? (
                         <div className="text-sm text-red-400">
@@ -745,7 +797,7 @@ export default function CalendarPage() {
                                 serviceId: SERVICE_ID,
                                 startsAt: bookingDraft.start.toISOString(),
                                 endsAt: end.toISOString(),
-                                status: bookingDraft.status?.toUpperCase() || "BOOKED",
+                                status: toApiStatus(bookingDraft.status),
                                 notesInternal: bookingDraft.notes,
                             };
 
@@ -764,26 +816,85 @@ export default function CalendarPage() {
                             }
 
                             try {
-                                await apiPost("/api/staff/appointments", payload);
+                                let saved;
+
+                                if (bookingDraft.id) {
+                                  saved = await apiPatch(`/api/staff/appointments/${bookingDraft.id}`, payload);
+                                } else {
+                                  saved = await apiPost("/api/staff/appointments", payload);
+                                }
 
                                 const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
                                 const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
 
                                 await fetchAppointmentsInRange(rangeStart, rangeEnd);
 
-                                setBookingDraft(null);
-                                setFocusedSlot(null);
+                                if (!bookingDraft.id && saved?._id) {
+                                  setBookingDraft((prev) => ({
+                                    ...prev,
+                                    id: saved._id,
+                                  }));
+                                }
+
+                                  // Determine if we should close the panel
+                                  const isCompleted = bookingDraft.status === "completed";
+                                  const isCancelled = bookingDraft.status === "cancelled";
+                                  const isNoShow = bookingDraft.status === "no_show";
+
+                                  // Prompt if completed without notes
+                                  if (isCompleted && !bookingDraft.notes?.trim()) {
+                                    const proceed = window.confirm(
+                                      "No session notes entered. Complete without notes?"
+                                    );
+                                    if (!proceed) return;
+                                  }
+
+                                  // Close only for completed / cancelled / no_show
+                                  if (isCompleted || isCancelled || isNoShow) {
+                                    setSidebarMode("day");
+                                    setBookingDraft(null);
+                                    setFocusedSlot(null);
+                                  }
                             } catch (err) {
                                 console.error(err);
                                 alert("Booking failed");
                             }
                           }}
-                          className="w-full px-3 py-2 text-xs rounded bg-neutral-700 hover:bg-neutral-600"
+                          disabled={needsNote && !hasNote}
+                          className={`w-full px-3 py-2 text-xs rounded bg-neutral-700 hover:bg-neutral-600 ${
+                            needsNote && !hasNote ? "opacity-50 cursor-not-allowed" : ""
+                          }`}
                         >
                           Confirm Booking
                         </button>
                       );
                     })()}
+                    {bookingDraft.id && (
+                      <button
+                        onClick={async () => {
+                          const ok = window.confirm("Delete this appointment? This will mark it as CANCELLED.");
+                          if (!ok) return;
+
+                          try {
+                            await apiDelete(`/api/staff/appointments/${bookingDraft.id}`);
+
+                            const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
+                            const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
+                            await fetchAppointmentsInRange(rangeStart, rangeEnd);
+
+                            setSidebarMode("day");
+                            setBookingDraft(null);
+                            setFocusedSlot(null);
+                          } catch (err) {
+                            console.error(err);
+                            alert("Delete failed");
+                          }
+                        }}
+                        className="w-full px-3 py-2 text-xs rounded bg-red-900 text-red-200 hover:bg-red-800"
+                      >
+                        Delete appointment
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

@@ -9,6 +9,91 @@ function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(id);
 }
 
+const ALLOWED_STATUSES = new Set([
+  "HELD",
+  "BOOKED",
+  "CHECKED_IN",
+  "COMPLETED",
+  "CANCELLED",
+  "NO_SHOW",
+]);
+
+function parseDateOrNull(v) {
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function normalizeStatus(v, fallback = "BOOKED") {
+  if (!v) return fallback;
+  const up = String(v).toUpperCase().trim();
+  return ALLOWED_STATUSES.has(up) ? up : null;
+}
+ 
+function validateDepositForBooking({ status, deposit }) {
+  if (status !== "BOOKED") return;
+
+  const required = deposit?.requiredAmountCents || 0;
+  const paid = deposit?.paidAmountCents || 0;
+
+  if (required > 0 && paid < required) {
+    const e = new Error("Deposit required before booking confirmation");
+    e.status = 400;
+    throw e;
+  }
+}
+
+function validateHoldExpiration({ status, holdDurationHours }) {
+  if (status !== "HELD") return null;
+
+  const allowed = [24, 48, 72];
+  if (!allowed.includes(holdDurationHours)) {
+    const e = new Error("Invalid hold duration");
+    e.status = 400;
+    throw e;
+  }
+
+  const expires = new Date();
+  expires.setHours(expires.getHours() + holdDurationHours);
+  return expires;
+}
+
+const ALLOWED_TRANSITIONS = {
+  HELD: ["BOOKED", "CANCELLED"],
+  BOOKED: ["CHECKED_IN", "CANCELLED", "NO_SHOW"],
+  CHECKED_IN: ["COMPLETED", "NO_SHOW"],
+  COMPLETED: [],
+  CANCELLED: [],
+  NO_SHOW: [],
+};
+
+function validateStatusTransition(from, to) {
+  if (from === to) return;
+
+  const allowed = ALLOWED_TRANSITIONS[from] || [];
+
+  if (!allowed.includes(to)) {
+    const e = new Error(`Invalid status transition from ${from} to ${to}`);
+    e.status = 400;
+    throw e;
+  }
+}
+
+async function expireHeldAppointments({ studioId, artistProfileId }) {
+  const now = new Date();
+
+  await Appointment.updateMany(
+    {
+      studioId,
+      artistProfileId,
+      status: "HELD",
+      holdExpiresAt: { $lte: now },
+    },
+    {
+      $set: { status: "CANCELLED", holdExpiresAt: null },
+    }
+  );
+}
+
 const router = express.Router();
 
 /*
@@ -22,6 +107,7 @@ async function hasConflict({
   startsAt,
   endsAt,
   excludeId = null,
+  session = null,
 }) {
   const query = {
     studioId,
@@ -35,8 +121,41 @@ async function hasConflict({
     query._id = { $ne: excludeId };
   }
 
-  const conflict = await Appointment.findOne(query).lean();
+ let q = Appointment.findOne(query);
+  if (session) q = q.session(session);
+
+  const conflict = await q.lean();
+
   return !!conflict;
+}
+
+async function runInTransaction(workFn) {
+  const session = await mongoose.startSession();
+
+  try {
+    let result;
+
+    // Retry once for transient transaction errors (write conflicts, etc.)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await session.withTransaction(async () => {
+          result = await workFn(session);
+        });
+        return result;
+      } catch (err) {
+        const isTransient =
+          err?.errorLabels?.includes("TransientTransactionError") ||
+          err?.errorLabels?.includes("UnknownTransactionCommitResult");
+
+        if (attempt === 0 && isTransient) continue;
+        throw err;
+      }
+    }
+
+    return result;
+  } finally {
+    session.endSession();
+  }
 }
 
 /*
@@ -58,12 +177,18 @@ router.get("/", async (req, res, next) => {
       return res.status(400).json({ message: "Invalid IDs" });
     }
 
+    await expireHeldAppointments({
+      studioId,
+      artistProfileId,
+    });
+
     const appointments = await Appointment.find({
       studioId,
       artistProfileId,
       startsAt: { $lt: new Date(to) },
       endsAt: { $gt: new Date(from) },
     })
+
       .populate("clientId")
       .populate("serviceId")
       .sort({ startsAt: 1 })
@@ -96,15 +221,38 @@ router.post("/", async (req, res, next) => {
       endsAt,
       status = "BOOKED",
       notesInternal,
-      createdBy = "FSTAFF",
+      deposit,
+      holdDurationHours,
     } = req.body;
 
-    if (isAdult === undefined) {
+    if (typeof isAdult !== "boolean") {
       return res.status(400).json({ message: "Age confirmation required" });
     }
 
     if (!studioId || !artistProfileId || !serviceId || !startsAt || !endsAt) {
       return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const startDate = parseDateOrNull(startsAt);
+    const endDate = parseDateOrNull(endsAt);
+    if (!startDate || !endDate) {
+      return res.status(400).json({ message: "Invalid startsAt/endsAt" });
+    }
+
+    if (startDate >= endDate) {
+      return res.status(400).json({ message: "Invalid time range" });
+    }
+
+    const statusNormalized = normalizeStatus(status, "BOOKED");
+    if (!statusNormalized) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    if (isAdult === false) {
+      const dob = parseDateOrNull(dateOfBirth);
+      if (!dob) {
+        return res.status(400).json({ message: "dateOfBirth required for minors" });
+      }
     }
 
     if (
@@ -115,59 +263,103 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "Invalid IDs" });
     }
 
-    let resolvedClientId = clientId;
+    const created = await runInTransaction(async (session) => {
+      let resolvedClientId = clientId;
 
-    if (resolvedClientId) {
-      if (!isValidObjectId(resolvedClientId)) {
-        return res.status(400).json({ message: "Invalid clientId" });
+      if (resolvedClientId) {
+        if (!isValidObjectId(resolvedClientId)) {
+          // throw inside txn so it aborts cleanly
+          const e = new Error("Invalid clientId");
+          e.status = 400;
+          throw e;
+        }
+      } else {
+        if (!clientName) {
+          const e = new Error("Client required");
+          e.status = 400;
+          throw e;
+        }
+
+        // Production-safe: require phone/email for new client creation
+        if (!phone || !email) {
+          const e = new Error("Phone and email required for new client");
+          e.status = 400;
+          throw e;
+        }
+
+        const Client = require("../clients/Client.model");
+
+        const newClient = await Client.create(
+          [
+            {
+              legalName: clientName,
+              phoneE164: phone,
+              email: email,
+              isAdult,
+              dateOfBirth: isAdult ? undefined : dateOfBirth,
+              status: "active",
+            },
+          ],
+          { session }
+        );
+
+        resolvedClientId = newClient[0]._id;
       }
-    } else {
-      if (!clientName) {
-        return res.status(400).json({ message: "Client required" });
-      }
 
-      const Client = require("../clients/Client.model");
-
-      const newClient = await Client.create({
-        legalName: clientName,
-        phoneE164: phone || "",
-        email: email || "",
-        isAdult,
-        dateOfBirth: isAdult ? undefined : dateOfBirth,
-        status: "active",
+      // Use the already-validated/parsed dates you created earlier in POST:
+      // startDate, endDate, and statusNormalized
+      const conflict = await hasConflict({
+        studioId,
+        artistProfileId,
+        startsAt: startDate,
+        endsAt: endDate,
+        session,
       });
 
-      resolvedClientId = newClient._id;
-    }
+      if (conflict) {
+        const e = new Error("Time conflict detected");
+        e.status = 409;
+        throw e;
+      }
 
-    if (new Date(startsAt) >= new Date(endsAt)) {
-      return res.status(400).json({ message: "Invalid time range" });
-    }
+      validateDepositForBooking({
+        status: statusNormalized,
+        deposit,
+      });
 
-    const conflict = await hasConflict({
-      studioId,
-      artistProfileId,
-      startsAt: new Date(startsAt),
-      endsAt: new Date(endsAt),
+      let holdExpiresAt = null;
+
+      if (statusNormalized === "HELD") {
+        holdExpiresAt = validateHoldExpiration({
+          status: statusNormalized,
+          holdDurationHours,
+        });
+      }
+
+      const appointmentDocs = await Appointment.create(
+        [
+          {
+            studioId,
+            artistProfileId,
+            serviceId,
+            clientId: resolvedClientId,
+            startsAt: startDate,
+            endsAt: endDate,
+            status: statusNormalized,
+            notesInternal,
+            deposit,
+            holdExpiresAt,
+            createdBy: "FSTAFF",
+          },
+        ],
+        { session }
+      );
+
+      return appointmentDocs[0];
     });
 
-    if (conflict) {
-      return res.status(409).json({ message: "Time conflict detected" });
-    }
+    return res.status(201).json(created);
 
-    const appointment = await Appointment.create({
-      studioId,
-      artistProfileId,
-      serviceId,
-      clientId: resolvedClientId,
-      startsAt,
-      endsAt,
-      status,
-      notesInternal,
-      createdBy,
-    });
-
-    res.status(201).json(appointment);
   } catch (err) {
     next(err);
   }
@@ -181,41 +373,108 @@ router.patch("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const existing = await Appointment.findById(id);
-    if (!existing) {
-      return res.status(404).json({ message: "Appointment not found" });
-    }
-
-    const {
-      startsAt,
-      endsAt,
-      status,
-      notesInternal,
-    } = req.body;
-
-    if (startsAt && endsAt) {
-      const conflict = await hasConflict({
-        studioId: existing.studioId,
-        artistProfileId: existing.artistProfileId,
-        startsAt: new Date(startsAt),
-        endsAt: new Date(endsAt),
-        excludeId: id,
-      });
-
-      if (conflict) {
-        return res.status(409).json({ message: "Time conflict detected" });
+    const updated = await runInTransaction(async (session) => {
+      const existing = await Appointment.findById(id).session(session);
+      if (!existing) {
+        const e = new Error("Appointment not found");
+        e.status = 404;
+        throw e;
       }
 
-      existing.startsAt = startsAt;
-      existing.endsAt = endsAt;
-    }
+      const { startsAt, endsAt, status, notesInternal, deposit, holdDurationHours } = req.body;
 
-    if (status) existing.status = status;
-    if (notesInternal !== undefined) existing.notesInternal = notesInternal;
+      const statusNormalized = status
+        ? normalizeStatus(status, existing.status)
+        : null;
 
-    await existing.save();
+      if (status && !statusNormalized) {
+        const e = new Error("Invalid status");
+        e.status = 400;
+        throw e;
+      }
 
-    res.json(existing);
+      let nextStart = existing.startsAt;
+      let nextEnd = existing.endsAt;
+
+      if (startsAt || endsAt) {
+        nextStart = startsAt ? parseDateOrNull(startsAt) : existing.startsAt;
+        nextEnd = endsAt ? parseDateOrNull(endsAt) : existing.endsAt;
+
+        if (!nextStart || !nextEnd) {
+          const e = new Error("Invalid startsAt/endsAt");
+          e.status = 400;
+          throw e;
+        }
+
+        if (nextStart >= nextEnd) {
+          const e = new Error("Invalid time range");
+          e.status = 400;
+          throw e;
+        }
+
+        const conflict = await hasConflict({
+          studioId: existing.studioId,
+          artistProfileId: existing.artistProfileId,
+          startsAt: nextStart,
+          endsAt: nextEnd,
+          excludeId: id,
+          session,
+        });
+
+        if (conflict) {
+          const e = new Error("Time conflict detected");
+          e.status = 409;
+          throw e;
+        }
+
+        existing.startsAt = nextStart;
+        existing.endsAt = nextEnd;
+      }
+      if (deposit !== undefined) {
+        existing.deposit = deposit;
+      }
+
+      if (statusNormalized) {
+        validateStatusTransition(existing.status, statusNormalized);
+        if ((statusNormalized === "CANCELLED" || statusNormalized === "NO_SHOW")) {
+          const note = typeof notesInternal === "string" ? notesInternal.trim() : "";
+          if (!note) {
+            const e = new Error("notesInternal required for CANCELLED / NO_SHOW");
+            e.status = 400;
+            throw e;
+          }
+        }
+        // If transitioning INTO HELD, compute expiration
+        if (statusNormalized === "HELD") {
+          existing.holdExpiresAt = validateHoldExpiration({
+            status: statusNormalized,
+            holdDurationHours,
+          });
+        }
+
+        // If transitioning OUT of HELD, clear expiration
+        if (existing.status === "HELD" && statusNormalized !== "HELD") {
+          existing.holdExpiresAt = null;
+        }
+
+        validateDepositForBooking({
+          status: statusNormalized,
+          deposit: existing.deposit,
+        });
+
+        existing.status = statusNormalized;
+      }
+
+      if (notesInternal !== undefined) {
+        existing.notesInternal = notesInternal;
+      }
+
+      await existing.save({ session });
+
+      return existing;
+    });
+
+    return res.json(updated);
   } catch (err) {
     next(err);
   }
@@ -228,9 +487,17 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    await Appointment.findByIdAndDelete(id);
+    const updated = await Appointment.findByIdAndUpdate(
+      id,
+      { status: "CANCELLED" },
+      { new: true }
+    );
 
-    res.json({ success: true });
+    if (!updated) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
+
+    res.json({ success: true, appointment: updated });
   } catch (err) {
     next(err);
   }

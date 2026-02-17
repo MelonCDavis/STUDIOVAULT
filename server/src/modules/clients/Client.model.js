@@ -5,6 +5,7 @@ const ClientSchema = new mongoose.Schema(
         legalName: {
             type: String,
             required: true, 
+            trim: true,
             index: true,
         },
         isAdult: {
@@ -21,6 +22,7 @@ const ClientSchema = new mongoose.Schema(
         phoneE164: {
             type: String,
             required: true,
+            trim: true,
             index: true,
         },
         smsVerifiedAt: Date,
@@ -28,6 +30,7 @@ const ClientSchema = new mongoose.Schema(
             type: String,
             required: true,
             lowercase: true,
+            trim: true,
             index: true,
         },
         emailVerifiedAt: Date,
@@ -40,7 +43,7 @@ const ClientSchema = new mongoose.Schema(
         // Optional, client-controlled
         address: String,
         pronouns: String,
-        preferrnedName: String,
+        preferredName: String,
         status: {
             type: String,
             enum: ["active", "inactive"],

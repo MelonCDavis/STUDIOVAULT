@@ -49,6 +49,10 @@ const AppointmentSchema = new mongoose.Schema(
             default: "BOOKED",
             index: true,
         },
+        holdExpiresAt: {
+            type:Date,
+            index: true,
+        },
         deposit: {
             requiredAmountCents: {
                 type: Number,
