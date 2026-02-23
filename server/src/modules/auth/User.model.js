@@ -4,6 +4,17 @@ const userSchema = new mongoose.Schema(
     {
         email: { type: String, required: true, unique: true, index: true },
 
+        passwordHash: {
+            type: String,
+            required: true,
+        },
+
+        clientId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Client",
+            index: true,
+        },
+
         phoneE164: { type: String, index: true },
 
         emailVerifiedAt: Date,

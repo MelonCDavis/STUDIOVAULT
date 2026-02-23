@@ -28,25 +28,76 @@ function toApiStatus(uiStatus) {
   return String(uiStatus).toUpperCase().trim(); // checked_in -> CHECKED_IN
 }
 
+function addDays(date, days) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    return d;
+}
+
 export default function CalendarPage() {
     // TEMP — replace with real context later
     const STUDIO_ID = "69936f65681b262ca3739f92";
     const ARTIST_ID = "69936f65681b262ca3739f95";
     const SERVICE_ID = "69936f65681b262ca3739f97";
-
+    const LS_KEY = "studiovault_staff_calendar_v1";
     const today = new Date();
-    const [currentDate, setCurrentDate] = useState(
-        new Date(today.getFullYear(), today.getMonth(), 1)
-    );
+
+    function getInitialCalendarState() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return { viewMode: "month", selectedDate: null };
+
+        const parsed = JSON.parse(raw);
+
+        return {
+          viewMode:
+            parsed.viewMode === "week" || parsed.viewMode === "month"
+            ? parsed.viewMode
+            : "month",
+          selectedDate: parsed.selectedDate
+            ? new Date(parsed.selectedDate)
+            : null,
+        };
+      } catch {
+        return { viewMode: "month", selectedDate: null };
+      }
+    }
+
+    const initialState = getInitialCalendarState();
+    const [viewMode, setViewMode] = useState(initialState.viewMode);
+    const [selectedDate, setSelectedDate] = useState(initialState.selectedDate);
+    
+    const [currentDate, setCurrentDate] = useState(() => {
+      if (initialState.selectedDate) {
+        return new Date(
+          initialState.selectedDate.getFullYear(),
+          initialState.selectedDate.getMonth(),
+          1
+        );
+      }
+      return new Date(today.getFullYear(), today.getMonth(), 1);
+    });
+
     const [bookingDraft, setBookingDraft] = useState(null);
     const [deleteTargetId, setDeleteTargetId] = useState(null);
     const [sidebarMode, setSidebarMode] = useState(null);
 
-    const [selectedDate, setSelectedDate] = useState(null);
-    const [viewMode, setViewMode] = useState("month");
-
     const [focusedSlot, setFocusedSlot] = useState(null);
     const [confirmedBookings, setConfirmedBookings] = useState([]);
+
+    useEffect(() => {
+      try {
+        localStorage.setItem(
+          LS_KEY,
+          JSON.stringify({
+            viewMode,
+            selectedDate: selectedDate ? selectedDate.toISOString() : null,
+            sidebarMode,
+            activeAppointmentId: bookingDraft?.id || null,
+          })
+        );
+      } catch {}
+    }, [viewMode, selectedDate, sidebarMode, bookingDraft]);
 
       async function fetchAppointmentsInRange(fromDate, toDate) {
         try {
@@ -90,12 +141,36 @@ export default function CalendarPage() {
         year: "numeric",
     });
 
-    const goPrevMonth = () => {
+    const goPrev = () => {
+      if (viewMode === "month") {
         setCurrentDate(new Date(year, month - 1, 1));
+        return;
+      }
+
+      // week mode: move selectedDate by -7 days (fallback to today)
+      const base = selectedDate || focusedSlot || today;
+      const next = addDays(base, -7);
+
+      setSelectedDate(next);
+      setFocusedSlot(null);
+      setSidebarMode((prev) => prev || "day"); // don’t aggressively close
+      setCurrentDate(new Date(next.getFullYear(), next.getMonth(), 1));
     };
 
-    const goNextMonth = ()=> {
-        setCurrentDate(new Date(year, month +1,1));
+    const goNext = () => {
+      if (viewMode === "month") {
+        setCurrentDate(new Date(year, month + 1, 1));
+        return;
+      }
+
+      // week mode: move selectedDate by +7 days (fallback to today)
+      const base = selectedDate || focusedSlot || today;
+      const next = addDays(base, 7);
+
+      setSelectedDate(next);
+      setFocusedSlot(null);
+      setSidebarMode((prev) => prev || "day");
+      setCurrentDate(new Date(next.getFullYear(), next.getMonth(), 1));
     };
 
     const handleDayClick = (dayNumber) => {
@@ -218,15 +293,49 @@ export default function CalendarPage() {
         fetchAppointmentsInRange(rangeStart, rangeEnd);
       }, [year, month]);
 
+      useEffect(() => {
+        try {
+            const raw = localStorage.getItem(LS_KEY);
+            if (!raw) return;
+
+            const parsed = JSON.parse(raw);
+            if (!parsed.activeAppointmentId) return;
+
+            const match = confirmedBookings.find(
+              (b) => b.id === parsed.activeAppointmentId
+            );
+
+            if (!match) return;
+
+            setSidebarMode("appointment");
+            setFocusedSlot(match.start);
+            setSelectedDate(match.start);
+
+            setBookingDraft({
+              id: match.id,
+              start: match.start,
+              hours: Math.floor((match.end - match.start) / 3600000),
+              minutes:
+                ((match.end - match.start) % 3600000) / 60000,
+              clientName: match.clientName,
+              phone: match.phone,
+              email: match.email,
+              service: match.service,
+              notes: match.notes,
+              status: toUiStatus(match.status),
+              isAdult: true,
+              dateOfBirth: "",
+            });
+          } catch {}
+        }, [confirmedBookings]);
+
     return (
         <div className="space-y-6 lg:grid lg:grid-cols-3 lg:gap-6 lg:space-y-0">
           <div className="lg:col-span-2 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between gap-4">
-                <button
-                  onClick={goPrevMonth}
-                  className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700">
-                    Prev
+                <button onClick={goPrev} className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700">
+                  Prev
                 </button>
                 <div className="flex items-center gap-4">
                   <h2 className="text-lg font-semibold">
@@ -242,10 +351,8 @@ export default function CalendarPage() {
                     {viewMode === "month" ? "Week View" : "Month View"}
                   </button>
                 </div>
-                <button 
-                  onClick={goNextMonth}
-                  className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700">
-                    Next
+                <button onClick={goNext} className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700">
+                  Next
                 </button>
             </div>
 

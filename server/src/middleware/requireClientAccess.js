@@ -1,7 +1,7 @@
 import { ROLES, roleAtLeast } from "../utils/roles.js";
 
 const Client = require('../modules/clients/Client.model');
-const Appointment = require('../modules/scheduling/appointment.model');
+const Appointment = require('../modules/scheduling/Appointment.model');
 const StudioMembership = require('../modules/studios/StudioMembership.model');
 const ArtistProfile = require('../modules/artists/ArtistProfile.model');
 const { httpError } = require('../utils/httpError');
