@@ -91,13 +91,14 @@ router.get(
   requireAuth,
   async (req, res, next) => {
     try {
-      const { artistProfileId, studioId, from, to } = req.query;
+      const { artistProfileId, studioId, from, to, durationMinutes } = req.query;
 
       const slots = await computeHourlySlots({
         artistProfileId,
         studioId,
         from,
         to,
+        durationMinutes: durationMinutes ? Number(durationMinutes) : 60,
       });
 
       res.json({ slots });

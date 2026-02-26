@@ -14,6 +14,7 @@ async function computeHourlySlots({
   studioId,
   from,
   to,
+  durationMinutes = 60, //default
 }) {
   const results = [];
 
@@ -31,52 +32,79 @@ async function computeHourlySlots({
   if (!weeklyRules.length) return [];
 
   // Fetch appointments in range once
+  const now = new Date();
+
   const appointments = await Appointment.find({
     artistProfileId,
     studioId,
     startsAt: { $lt: endDate },
     endsAt: { $gt: startDate },
-    status: { $in: ["BOOKED", "CHECKED_IN", "COMPLETED", "HELD"] },
+    $or: [
+      { status: { $in: ["BOOKED", "CHECKED_IN", "COMPLETED"] } },
+      {
+        status: "HELD",
+        holdExpiresAt: { $gt: now },
+      },
+    ],
   }).lean();
 
   const day = new Date(startDate);
+  day.setHours(0, 0, 0, 0);
 
   while (day < endDate) {
     const dayOfWeek = day.getDay();
 
-    const rule = weeklyRules.find(r => r.DayOfWeek === dayOfWeek);
-    if (!rule) {
-      day.setDate(day.getDate() + 1);
+    // Get ALL rules for this day
+const rulesForDay = weeklyRules.filter(r => r.DayOfWeek === dayOfWeek);
+
+if (!rulesForDay.length) {
+  day.setDate(day.getDate() + 1);
+  continue;
+}
+
+const STEP_MINUTES = 15;
+
+for (const rule of rulesForDay) {
+  const [startHour, startMinute] = rule.startTime.split(":").map(Number);
+  const [endHour, endMinute] = rule.endTime.split(":").map(Number);
+
+  const windowStart = new Date(day);
+  windowStart.setHours(startHour, startMinute, 0, 0);
+
+  const windowEnd = new Date(day);
+  windowEnd.setHours(endHour, endMinute, 0, 0);
+
+  let slotStart = new Date(windowStart);
+
+  while (addMinutes(slotStart, durationMinutes) <= windowEnd) {
+    const slotEnd = addMinutes(slotStart, durationMinutes);
+
+    if (
+      slotStart < startDate ||
+      slotStart >= endDate ||
+      slotEnd > endDate
+    ) {
+      slotStart = addMinutes(slotStart, STEP_MINUTES);
       continue;
     }
 
-    const [startHour, startMinute] = rule.startTime.split(":").map(Number);
-    const [endHour, endMinute] = rule.endTime.split(":").map(Number);
+    const conflict = appointments.some(appt =>
+      overlaps(slotStart, slotEnd, appt.startsAt, appt.endsAt)
+    );
 
-    const windowStart = new Date(day);
-    windowStart.setHours(startHour, startMinute, 0, 0);
-
-    const windowEnd = new Date(day);
-    windowEnd.setHours(endHour, endMinute, 0, 0);
-
-    let slotStart = new Date(windowStart);
-
-    while (addMinutes(slotStart, 60) <= windowEnd) {
-      const slotEnd = addMinutes(slotStart, 60);
-
-      const conflict = appointments.some(appt =>
-        overlaps(slotStart, slotEnd, appt.startsAt, appt.endsAt)
-      );
-
-      if (!conflict) {
-        results.push(new Date(slotStart));
-      }
-
-      slotStart = addMinutes(slotStart, 60);
+    if (!conflict) {
+      results.push(new Date(slotStart));
     }
+
+    slotStart = addMinutes(slotStart, STEP_MINUTES);
+  }
+}
+
+
 
     day.setDate(day.getDate() + 1);
   }
+  results.sort((a, b) => a - b);
 
   return results;
 }

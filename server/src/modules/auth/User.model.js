@@ -15,6 +15,25 @@ const userSchema = new mongoose.Schema(
             index: true,
         },
 
+        staffId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Staff", // or ArtistProfile depending on your model
+            index: true,
+        },
+
+        role: {
+            type: String,
+            enum: [
+                "CLIENT",
+                "FRONT_DESK",
+                "ARTIST",
+                "MANAGER",
+                "OWNER"
+            ],
+            default: "CLIENT",
+            index: true,
+        },
+        
         phoneE164: { type: String, index: true },
 
         emailVerifiedAt: Date,
