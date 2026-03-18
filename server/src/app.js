@@ -6,6 +6,8 @@ const consultationStaffRoutes = require("./modules/scheduling/consultation.staff
 const consultationClientRoutes = require("./modules/scheduling/consultation.client.routes");
 const bookingRequestClientRoutes = require("./modules/scheduling/bookingRequest.client.routes");
 const staffBookingRequestRoutes = require("./modules/scheduling/bookingRequest.staff.routes");
+const staffScheduleRoutes = require("./modules/scheduling/staffSchedule.routes");
+const consultationSettingsRoutes = require("./modules/scheduling/consultationSettings.routes");
 
 const authRoutes = require("./modules/auth/auth.routes");
 const clientRoutes = require("./modules/clients/client.routes");
@@ -39,6 +41,8 @@ app.use("/api/staff/appointments", appointmentRoutes);
 app.use("/api/client/booking-request", bookingRequestClientRoutes);
 app.use("/api/staff", consultationStaffRoutes);
 app.use("/api/staff", staffBookingRequestRoutes);
+app.use("/api/staff", staffScheduleRoutes);
+app.use("/api/staff/consultation-settings", consultationSettingsRoutes);
 
 
 app.use(errorHandler);

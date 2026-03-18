@@ -4,24 +4,32 @@ const ClientSchema = new mongoose.Schema(
     {
         legalName: {
             type: String,
-            required: true, 
             trim: true,
             index: true,
         },
+        preferredName: {
+            type: String,
+            trim: true,
+            },
+
+        pronouns: {
+            type: String,
+            trim: true,
+            },
+            
         isAdult: {
             type: Boolean,
-            required: true,
             },
 
             dateOfBirth: {
-            type: Date,
-            required: function () {
-                return this.isAdult === false;
+                type: Date,
             },
+        hasCompletedOnboarding: {
+            type: Boolean,
+            default: false,
             },
         phoneE164: {
             type: String,
-            required: true,
             trim: true,
             index: true,
         },
@@ -42,8 +50,6 @@ const ClientSchema = new mongoose.Schema(
         },
         // Optional, client-controlled
         address: String,
-        pronouns: String,
-        preferredName: String,
         status: {
             type: String,
             enum: ["active", "inactive"],

@@ -1,7 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const Appointment = require("./Appointment.model");
-
+const { requireAuth, requireStaff } = require("../auth/auth.middleware");
 require("../clients/Client.model");
 require("./Service.model");
 
@@ -162,7 +162,7 @@ async function runInTransaction(workFn) {
   GET appointments by date range
   /api/staff/appointments?studioId=...&artistProfileId=...&from=...&to=...
 */
-router.get("/", async (req, res, next) => {
+router.get("/", requireAuth, requireStaff, async (req, res, next) => {
   try {
     const { studioId, artistProfileId, from, to } = req.query;
 
@@ -205,7 +205,7 @@ router.get("/", async (req, res, next) => {
 /*
   CREATE appointment
 */
-router.post("/", async (req, res, next) => {
+router.post("/", requireAuth, requireStaff, async (req, res, next) => {
   try {
     const {
       studioId,
@@ -369,7 +369,7 @@ router.post("/", async (req, res, next) => {
 /*
   UPDATE appointment
 */
-router.patch("/:id", async (req, res, next) => {
+router.patch("/:id", requireAuth, requireStaff, async (req, res, next) => {
   try {
     const { id } = req.params;
 
@@ -483,7 +483,7 @@ router.patch("/:id", async (req, res, next) => {
 /*
   DELETE appointment
 */
-router.delete("/:id", async (req, res, next) => {
+router.delete("/:id", requireAuth, requireStaff, async (req, res, next) => {
   try {
     const { id } = req.params;
 

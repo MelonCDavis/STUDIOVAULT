@@ -1,81 +1,141 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
+
+import HelpDropdown from "../components/HelpDropdown";
+import ProfilePanel from "../panels/ProfilePanel";
+import ConsultationsPanel from "../panels/ConsultationsPanel";
+import CalendarPanel from "../panels/CalendarPanel";
+import UpcomingPanel from "../panels/UpcomingPanel";
+import MessagesPanel from "../panels/MessagesPanel";
+import DocumentsPanel from "../panels/DocumentsPanel";
 
 export default function ClientDashboard() {
-  const { token, logout } = useAuth();
-  const navigate = useNavigate();
+  const { token } = useAuth();
+  const location = useLocation();
 
-  const [appointments, setAppointments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
+  const [activePanel, setActivePanel] = useState(null);
+  const [evaluationAppointmentId, setEvaluationAppointmentId] = useState(null);
 
+  // Fetch profile state
   useEffect(() => {
-    async function fetchAppointments() {
+    async function fetchProfile() {
       try {
-        const res = await fetch(
-          "http://localhost:5000/api/client/appointments",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-
-        if (res.status === 401) {
-          logout();
-          navigate("/client/login");
-          return;
-        }
-
-        if (!res.ok) {
-          throw new Error("Failed to fetch appointments");
-        }
+        const res = await fetch("http://localhost:5000/api/client/me", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
 
         const data = await res.json();
-        setAppointments(data);
+
+        setHasCompletedOnboarding(data.hasCompletedOnboarding);
+
+        if (!data.hasCompletedOnboarding) {
+          setActivePanel("profile");
+        }
       } catch (err) {
-        setError("Could not load appointments");
+        console.error("Failed to load profile");
       } finally {
-        setLoading(false);
+        setLoadingProfile(false);
       }
     }
 
-    fetchAppointments();
-  }, [token, logout, navigate]);
+    fetchProfile();
+  }, [token]);
 
-  if (loading) {
+  // Intent override (appointment evaluation only)
+  useEffect(() => {
+    if (location.state?.intent === "evaluate-appointment") {
+      setActivePanel("calendar");
+      setEvaluationAppointmentId(location.state.appointmentId);
+    }
+  }, [location.state]);
+
+  if (loadingProfile) {
     return <div className="text-sm text-neutral-400">Loading...</div>;
   }
 
-  if (error) {
-    return <div className="text-sm text-red-400">{error}</div>;
-  }
+  const renderPanel = () => {
+    switch (activePanel) {
+      case "profile":
+        return (
+          <ProfilePanel
+            onComplete={() => {
+              setHasCompletedOnboarding(true);
+              setActivePanel(null);
+            }}
+          />
+        );
+
+      case "consultations":
+        return <ConsultationsPanel />;
+
+      case "calendar":
+        return (
+          <CalendarPanel
+            evaluationAppointmentId={evaluationAppointmentId}
+          />
+        );
+
+      case "upcoming":
+        return <UpcomingPanel />;
+
+      case "messages":
+        return <MessagesPanel />;
+
+      case "documents":
+        return <DocumentsPanel />;
+
+      default:
+        return null;
+    }
+  };
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">
-        My Appointments
-      </h1>
+    <div className="space-y-6">
 
-      {appointments.length === 0 ? (
-        <div className="text-sm text-neutral-400">
-          No appointments yet.
-        </div>
-      ) : (
-        appointments.map((appt) => (
-          <div
-            key={appt._id}
-            className="border border-neutral-800 bg-neutral-900 p-3 rounded text-sm"
-          >
-            <div>
-              {new Date(appt.startsAt).toLocaleString()}
-            </div>
-            <div className="text-neutral-400">
-              Status: {appt.status}
-            </div>
+      {/* Hero / Dropdown */}
+      {activePanel === null && (
+        <div className="relative rounded-3xl border border-neutral-800 bg-neutral-900/40 p-8 text-center">
+
+          {/* Decorative Frame (Phase 1 minimal skin) */}
+          <div className="absolute inset-0 pointer-events-none rounded-3xl border border-amber-500/20" />
+
+          <h1 className="text-xl font-serif tracking-wide">
+            How may we assist you?
+          </h1>
+
+          <div className="mt-6 max-w-sm mx-auto">
+            <HelpDropdown
+              disabled={!hasCompletedOnboarding}
+              onSelect={(value) => setActivePanel(value)}
+            />
           </div>
-        ))
+        </div>
+      )}
+
+      {/* Active Panel */}
+      {activePanel !== null && (
+        <div className="space-y-4">
+
+          {hasCompletedOnboarding && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => setActivePanel(null)}
+                className="text-xs text-neutral-400 hover:text-neutral-200"
+              >
+                Back
+              </button>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 p-4">
+            {renderPanel()}
+          </div>
+        </div>
       )}
     </div>
   );

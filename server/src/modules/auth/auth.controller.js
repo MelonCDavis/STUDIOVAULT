@@ -39,6 +39,7 @@ async function registerClient(req, res, next) {
     const user = await User.create({
       email,
       passwordHash,
+      role: "CLIENT",
       legalName,
       phoneE164,
       clientId: client._id,

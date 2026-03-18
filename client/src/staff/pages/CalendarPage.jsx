@@ -334,26 +334,32 @@ export default function CalendarPage() {
           <div className="lg:col-span-2 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between gap-4">
-                <button onClick={goPrev} className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700">
-                  Prev
-                </button>
-                <div className="flex items-center gap-4">
-                  <h2 className="text-lg font-semibold">
-                    {monthLabel}
-                  </h2>
+              <button
+                onClick={goPrev}
+                className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700"
+              >
+                Prev
+              </button>
 
-                  <button
-                    onClick={() =>
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-semibold">{monthLabel}</h2>
+
+                <button
+                  onClick={() =>
                     setViewMode(viewMode === "month" ? "week" : "month")
-                    }
-                    className="text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
-                  >
-                    {viewMode === "month" ? "Week View" : "Month View"}
-                  </button>
-                </div>
-                <button onClick={goNext} className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700">
-                  Next
+                  }
+                  className="text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                >
+                  {viewMode === "month" ? "Week View" : "Month View"}
                 </button>
+              </div>
+
+              <button
+                onClick={goNext}
+                className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700"
+              >
+                Next
+              </button>
             </div>
 
             {/* Weekday Labels */}

@@ -35,7 +35,7 @@ const StudioMembershipSchema = new mongoose.Schema(
 );
 
 StudioMembershipSchema.index(
-    { studioID: 1, userId: 1},
+    { studioId: 1, userId: 1},
     { unique: true }
 );
 

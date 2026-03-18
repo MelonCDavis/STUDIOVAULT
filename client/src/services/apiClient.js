@@ -1,8 +1,10 @@
 const BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+const TOKEN_KEY = "studiovault_token";
+
 function getToken() {
-  return localStorage.getItem("sv_token");
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 async function request(method, url, body) {

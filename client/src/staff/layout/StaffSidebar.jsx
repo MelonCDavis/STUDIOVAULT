@@ -1,8 +1,8 @@
 import { NavLink } from "react-router-dom";
-import { useStaffAuth } from "../../context/StaffAuthContext";
+import { useAuth } from "../../auth/AuthContext";
 
 export default function StaffSidebar({ sidebarOpen, setSidebarOpen }) {
-    const { role } = useStaffAuth();
+    const { role } = useAuth();
     return (
         <>
           {/* Overlay (mobile only) */}
@@ -44,6 +44,15 @@ export default function StaffSidebar({ sidebarOpen, setSidebarOpen }) {
                       className="px-3 py-2 rounded hover:bg-neutral-800"
                     >
                         Calendar
+                    </NavLink>
+
+                    <NavLink
+                      to="/staff/schedule"
+                      end
+                      onClick={() => setSidebarOpen(false)}
+                      className="px-3 py-2 rounded hover:bg-neutral-800"
+                    >
+                        Schedule
                     </NavLink>
 
                     <NavLink

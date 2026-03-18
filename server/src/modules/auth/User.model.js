@@ -30,7 +30,7 @@ const userSchema = new mongoose.Schema(
                 "MANAGER",
                 "OWNER"
             ],
-            default: "CLIENT",
+            required: true,
             index: true,
         },
         
