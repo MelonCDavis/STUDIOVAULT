@@ -1,4 +1,3 @@
-const { Modal } = require("bootstrap");
 const mongoose = require("mongoose");
 
 const ClientStudioLinkSchema = new mongoose.Schema(
@@ -36,4 +35,4 @@ ClientStudioLinkSchema.index(
     { unique: true }
 );
 
-Module.exports = mongoose.model("ClientStudioLink", ClientStudioLinkSchema);
+module.exports = mongoose.model("ClientStudioLink", ClientStudioLinkSchema);

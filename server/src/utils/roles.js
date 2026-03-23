@@ -1,26 +1,27 @@
-export const ROLES = {
-    OWNER: "OWNER",
-    MANAGER: "MANAGER",
-    ARTIST: "ARTIST",
-    FRONT_DESK: "FRONT_DESK",
+const ROLES = {
+  OWNER: "OWNER",
+  MANAGER: "MANAGER",
+  ARTIST: "ARTIST",
+  FRONT_DESK: "FRONT_DESK",
+  CLIENT: "CLIENT",
 };
 
 const ROLE_HIERARCHY = [
-    ROLES.OWNER,
-    ROLES.MANAGER,
-    ROLES.ARTIST,
-    ROLES.FRONT_DESK,
+  ROLES.OWNER,
+  ROLES.MANAGER,
+  ROLES.ARTIST,
+  ROLES.FRONT_DESK,
 ];
 
 function roleAtLeast(role, minimumRole) {
-    return (
-        ROLE_HIERARCHY.indexOf(role) <= 
-        ROLE_HIERARCHY.indexOf(minimumRole)
-    );
+  return (
+    ROLE_HIERARCHY.indexOf(role) <=
+    ROLE_HIERARCHY.indexOf(minimumRole)
+  );
 }
 
 module.exports = {
-    ROLES,
-    ROLE_HIERARCHY,
-    roleAtLeast,
+  ROLES,
+  ROLE_HIERARCHY,
+  roleAtLeast,
 };

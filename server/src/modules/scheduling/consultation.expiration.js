@@ -1,5 +1,4 @@
 const Consultation = require("./Consultation.model");
-const Appointment = require("./Appointment.model");
 
 async function expireConsultations() {
   try {
@@ -13,16 +12,6 @@ async function expireConsultations() {
     if (!expired.length) return;
 
     for (const consultation of expired) {
-      const appointment = await Appointment.findById(
-        consultation.appointmentId
-      );
-
-      if (appointment) {
-        appointment.status = "CANCELLED";
-        appointment.holdExpiresAt = undefined;
-        await appointment.save();
-      }
-
       consultation.status = "EXPIRED";
 
       consultation.messages.push({

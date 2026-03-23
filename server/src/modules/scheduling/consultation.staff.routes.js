@@ -1,8 +1,63 @@
 const express = require("express");
 const router = express.Router();
 const { requireAuth, requireStaff } = require("../auth/auth.middleware");
-
 const Consultation = require("./Consultation.model");
+const { computeConsultationSlots } = require("./availability/computeConsultationSlots");
+
+// GET /api/staff/consultations
+router.get(
+  "/consultations",
+  requireAuth,
+  requireStaff,
+  async (req, res, next) => {
+    try {
+      const { studioId, artistProfileId, status } = req.query;
+
+      const query = {};
+
+      if (studioId) query.studioId = studioId;
+      if (artistProfileId) query.artistProfileId = artistProfileId;
+      if (status) query.status = status;
+
+      const consultations = await Consultation.find(query)
+        .sort({ createdAt: -1 })
+        .populate("clientId", "legalName email phoneE164");
+
+      res.json(consultations);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/staff/consultations/availability
+router.get(
+  "/consultations/availability",
+  requireAuth,
+  requireStaff,
+  async (req, res, next) => {
+    try {
+      const { artistProfileId, studioId, from, to } = req.query;
+
+      if (!artistProfileId || !studioId || !from || !to) {
+        return res.status(400).json({ error: "Missing required query params" });
+      }
+
+      const slots = await computeConsultationSlots({
+        artistProfileId,
+        studioId,
+        from,
+        to,
+      });
+
+      res.json({
+        slots: slots.map((d) => d.toISOString()),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 // PATCH /api/staff/consultations/:id/approve
 router.patch(
@@ -18,9 +73,11 @@ router.patch(
       }
 
       if (consultation.status !== "REQUESTED") {
-        return res.status(400).json({ error: "Consultation not in REQUESTED state" });
+        return res.status(400).json({
+          error: "Consultation not in REQUESTED state",
+        });
       }
-c
+
       consultation.status = "ACCEPTED";
 
       if (req.body?.message) {
@@ -54,7 +111,9 @@ router.patch(
       }
 
       if (consultation.status !== "REQUESTED") {
-        return res.status(400).json({ error: "Consultation not in REQUESTED state" });
+        return res.status(400).json({
+          error: "Consultation not in REQUESTED state",
+        });
       }
 
       consultation.status = "DECLINED";

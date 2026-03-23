@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const BookingRequest = require("./bookingRequest.model");
-const { requireAuth } = require("../../middleware/requireAuth");
+const { requireAuth } = require("../auth/auth.middleware");
 const { requireStudioRole } = require("../../middleware/requireStudioRole");
 const crypto = require("crypto");
 

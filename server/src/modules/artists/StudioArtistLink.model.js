@@ -32,4 +32,4 @@ const StudioArtistLinkSchema = new mongoose.Schema(
     }
 );
 
-modules.exports = mongoose.model("StudioArtistLink", StudioArtistLinkSchema);
+module.exports = mongoose.model("StudioArtistLink", StudioArtistLinkSchema);

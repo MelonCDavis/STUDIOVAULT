@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { requireAuth, requireClient } = require("../auth/auth.middleware");
 const { computeConsultationSlots } = require("./availability/computeConsultationSlots");
-const ArtistProfile = require("../artists/ArtistProfile.model");
+const ConsultationSettings = require("./consultationSettings.model");
 const Consultation = require("./Consultation.model");
 
 console.log("CONSULTATION ROUTES LOADED");
@@ -20,6 +20,15 @@ router.get(
         return res.status(400).json({ error: "Missing required query params" });
       }
 
+      const settings = await ConsultationSettings.findOne({
+        artistProfileId,
+        studioId,
+      }).lean();
+
+      if (!settings || settings.mode === "ARTIST_CONTROLLED") {
+        return res.json({ slots: [] });
+      }
+
       const slots = await computeConsultationSlots({
         artistProfileId,
         studioId,
@@ -28,7 +37,7 @@ router.get(
       });
 
       res.json({
-        slots: slots.map(d => d.toISOString()),
+        slots: slots.map((d) => d.toISOString()),
       });
     } catch (err) {
       next(err);
@@ -57,19 +66,21 @@ router.post(
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      const artist = await ArtistProfile.findById(artistProfileId);
+      const settings = await ConsultationSettings.findOne({
+        artistProfileId,
+        studioId,
+      }).lean();
 
-      if (!artist) {
-        return res.status(404).json({ error: "Artist not found" });
-      }
-
-      const settings = artist.consultationSettings;
-
-      if (!settings || !settings.isEnabled) {
+      if (!settings) {
         return res.status(400).json({ error: "Consultations not enabled" });
       }
 
-      // Recompute availability for that day
+      if (settings.mode === "ARTIST_CONTROLLED") {
+        return res.status(400).json({
+          error: "Consultations are artist-controlled for this artist.",
+        });
+      }
+
       const dayStart = new Date(startsAt);
       dayStart.setUTCHours(0, 0, 0, 0);
 
@@ -83,17 +94,11 @@ router.post(
         to: dayEnd,
       });
 
-      // Normalize to ISO for comparison
       const requestedISO = new Date(startsAt).toISOString();
 
       const isValidSlot = availableSlots.some(
-        d => d.toISOString() === requestedISO
+        (d) => d.toISOString() === requestedISO
       );
-
-      console.log("AVAILABLE SLOTS", availableSlots.map(d => d.toISOString()));
-      console.log("REQUESTED", requestedISO);
-      console.log("IS VALID", isValidSlot);
-      
 
       if (!isValidSlot) {
         return res.status(400).json({
@@ -105,14 +110,14 @@ router.post(
         studioId,
         artistProfileId,
         clientId: req.user.clientId,
-        startsAt: new Date(startsAt), // informational only
+        startsAt: new Date(startsAt),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
         intake: {
           description: description || "",
           preferredDate: preferredDate || "",
           travelInfo: travelInfo || "",
           budget: budget || "",
         },
-
         messages: [
           {
             sender: "CLIENT",

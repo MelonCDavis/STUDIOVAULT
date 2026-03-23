@@ -2,7 +2,7 @@ const { DateTime } = require("luxon");
 const Appointment = require("../Appointment.model");
 const Consultation = require("../Consultation.model");
 const AvailabilityRule = require("../AvailabilityRule.model");
-const ArtistProfile = require("../../artists/ArtistProfile.model");
+const ConsultationSettings = require("../consultationSettings.model");
 
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60000);
@@ -32,15 +32,24 @@ async function computeConsultationSlots({
   const endDate = new Date(to);
   const now = new Date();
 
-  const artist = await ArtistProfile.findById(artistProfileId).lean();
-  if (!artist) return [];
+  const settings = await ConsultationSettings.findOne({
+    artistProfileId,
+    studioId,
+  }).lean();
 
-  const settings = artist.consultationSettings;
-  if (!settings || !settings.isEnabled) return [];
+  if (!settings) return [];
 
-  const consultDuration = settings.defaultDuration || 30;
-  const placementMode = settings.placementMode || "OPEN_ONLY";
-  const magneticCount = Math.max(0, settings.magneticCount || 0);
+  const consultDuration = settings.consultationDurationMinutes || 30;
+  const placementMode = settings.mode || "OPEN_ONLY";
+  const magneticCount = Math.max(0, (settings.cascadeCount || 1) - 1);
+
+  if (placementMode === "ARTIST_CONTROLLED") return [];
+
+  const settingsStart = settings.startDate ? new Date(settings.startDate) : null;
+  const settingsEnd = settings.endDate ? new Date(settings.endDate) : null;
+
+  if (settingsStart && endDate < settingsStart) return [];
+  if (settingsEnd && startDate > settingsEnd) return [];
 
   const weeklyRules = await AvailabilityRule.find({
     artistProfileId,
@@ -58,11 +67,6 @@ async function computeConsultationSlots({
     endsAt: { $gt: startDate },
   }).lean();
 
-  // IMPORTANT:
-  // CLOSE_MAGNETIC unlock depends on seeing later occupied consults in the chain.
-  // POST validation may call computeConsultationSlots with a narrow `to`,
-  // so we extend the upper bound by magneticCount * consultDuration (plus 1ms)
-  // to include any consults at/after endDate that affect magnetic unlocking.
   const consultUpperBound = new Date(
     endDate.getTime() + (magneticCount * consultDuration * 60000) + 1
   );
@@ -75,228 +79,162 @@ async function computeConsultationSlots({
   }).lean();
 
   const studioTz = weeklyRules[0].timezone || "America/New_York";
-
   const results = [];
 
   let dayCursor = DateTime.fromJSDate(startDate, { zone: studioTz }).startOf("day");
   const endCursor = DateTime.fromJSDate(endDate, { zone: studioTz }).startOf("day");
 
   while (dayCursor <= endCursor) {
-
     const jsDay = dayCursor.weekday === 7 ? 0 : dayCursor.weekday;
-
-    const rulesForDay = weeklyRules.filter(r => r.DayOfWeek === jsDay);
+    const rulesForDay = weeklyRules.filter((r) => r.DayOfWeek === jsDay);
 
     for (const rule of rulesForDay) {
-
       const tz = rule.timezone || studioTz;
 
       const [sh, sm] = rule.startTime.split(":").map(Number);
       const [eh, em] = rule.endTime.split(":").map(Number);
 
-      const windowStart = dayCursor.setZone(tz).set({
-        hour: sh,
-        minute: sm,
-        second: 0,
-        millisecond: 0,
-      }).toJSDate();
+      const windowStart = dayCursor
+        .setZone(tz)
+        .set({ hour: sh, minute: sm, second: 0, millisecond: 0 })
+        .toJSDate();
 
-      const windowEnd = dayCursor.setZone(tz).set({
-        hour: eh,
-        minute: em,
-        second: 0,
-        millisecond: 0,
-      }).toJSDate();
+      const windowEnd = dayCursor
+        .setZone(tz)
+        .set({ hour: eh, minute: em, second: 0, millisecond: 0 })
+        .toJSDate();
 
       if (!(windowStart < windowEnd)) continue;
+      if (settingsStart && windowEnd < settingsStart) continue;
+      if (settingsEnd && windowStart > settingsEnd) continue;
 
       const clampedStart = windowStart < startDate ? startDate : windowStart;
       const clampedEnd = windowEnd > endDate ? endDate : windowEnd;
 
       if (!(clampedStart < clampedEnd)) continue;
 
-      const nonConsultBoundary = appointments
-        .filter(a =>
-          isActiveAppointment(a, now) &&
-          a.startsAt >= clampedStart &&
-          a.startsAt < clampedEnd
-        )
-        .map(a => a.startsAt)
-        .sort((a, b) => a - b)[0] || clampedEnd;
+      const nonConsultBoundary =
+        appointments
+          .filter(
+            (a) =>
+              isActiveAppointment(a, now) &&
+              a.startsAt >= clampedStart &&
+              a.startsAt < clampedEnd
+          )
+          .map((a) => a.startsAt)
+          .sort((a, b) => a - b)[0] || clampedEnd;
 
       function appointmentBlocks(slotStart, slotEnd) {
-        return appointments.some(a =>
-          isActiveAppointment(a, now) &&
-          overlaps(slotStart, slotEnd, a.startsAt, a.endsAt)
+        return appointments.some(
+          (a) =>
+            isActiveAppointment(a, now) &&
+            overlaps(slotStart, slotEnd, a.startsAt, a.endsAt)
         );
       }
 
       function consultOccupies(slotStart, slotEnd) {
-        return consultations.some(c =>
-          isActiveConsult(c) &&
-          overlaps(slotStart, slotEnd, c.startsAt, addMinutes(c.startsAt, consultDuration))
+        return consultations.some(
+          (c) =>
+            isActiveConsult(c) &&
+            overlaps(
+              slotStart,
+              slotEnd,
+              c.startsAt,
+              addMinutes(c.startsAt, consultDuration)
+            )
         );
       }
 
-      // OPEN_ONLY (strict anchor, no unlock)
-      if (placementMode === "OPEN_ONLY") {
+      if (placementMode === "FULLY_OPEN") {
+        let slotStart = new Date(windowStart);
 
-        const slotStart = windowStart;
+        while (true) {
+          const slotEnd = addMinutes(slotStart, consultDuration);
+
+          if (slotStart < clampedStart) {
+            slotStart = addMinutes(slotStart, consultDuration);
+            continue;
+          }
+
+          if (slotEnd > clampedEnd) break;
+
+          const isOccupied = consultations.some(
+            (c) =>
+              isActiveConsult(c) &&
+              c.startsAt.getTime() === slotStart.getTime()
+          );
+
+          if (!isOccupied && !appointmentBlocks(slotStart, slotEnd)) {
+            results.push(new Date(slotStart));
+          }
+
+          slotStart = addMinutes(slotStart, consultDuration);
+        }
+
+        continue;
+      }
+
+      if (placementMode === "OPEN_ONLY") {
+        const slotStart = new Date(windowStart);
         const slotEnd = addMinutes(slotStart, consultDuration);
 
-        if (slotStart >= clampedStart && slotEnd <= clampedEnd) {
-
-          const isOccupied = consultations.some(c =>
-            isActiveConsult(c) &&
-            c.startsAt.getTime() === slotStart.getTime()
-          );
-
-          // Steak blocks carrot; carrot blocks carrot
-          if (!isOccupied && !appointmentBlocks(slotStart, slotEnd)) {
-            results.push(new Date(slotStart));
-          }
+        if (
+          slotStart >= clampedStart &&
+          slotEnd <= nonConsultBoundary &&
+          !appointmentBlocks(slotStart, slotEnd) &&
+          !consultOccupies(slotStart, slotEnd)
+        ) {
+          results.push(slotStart);
         }
 
         continue;
       }
 
-      // OPEN_MAGNETIC LOGIC
-      if (placementMode === "OPEN_MAGNETIC") {
-
-        const base = windowStart;
-
-        // Build ordered possible slot starts
-        const possibleSlots = [];
-        for (let i = 0; i <= magneticCount; i++) {
-          possibleSlots.push(addMinutes(base, i * consultDuration));
-        }
-
-        // Determine which are occupied
-        const occupied = possibleSlots.map(slotStart =>
-          consultations.some(c =>
-            isActiveConsult(c) &&
-            c.startsAt.getTime() === slotStart.getTime()
-          )
-        );
-
-        // Determine next unlockable index
-        let nextIndex = 0;
-
-        for (let i = 0; i < occupied.length; i++) {
-          if (!occupied[i]) {
-            nextIndex = i;
-            break;
-          }
-          if (i === occupied.length - 1) {
-            nextIndex = -1; // fully consumed
-          }
-        }
-
-        if (nextIndex !== -1) {
-
-          // All previous must be occupied
-          const allPrevOccupied = occupied
-            .slice(0, nextIndex)
-            .every(Boolean);
-
-          if (allPrevOccupied) {
-            const slotStart = possibleSlots[nextIndex];
-            const slotEnd = addMinutes(slotStart, consultDuration);
-
-            if (
-              slotStart >= clampedStart &&
-              slotEnd <= nonConsultBoundary &&
-              !appointmentBlocks(slotStart, slotEnd)
-            ) {
-              results.push(new Date(slotStart));
-            }
-          }
-        }
-
-        continue;
-      }
-
-      // CLOSE_ONLY (strict anchor)
       if (placementMode === "CLOSE_ONLY") {
+        const slotStart = addMinutes(nonConsultBoundary, -consultDuration);
+        const slotEnd = addMinutes(slotStart, consultDuration);
 
-        const baseEnd = windowEnd;
-        const slotStart = addMinutes(baseEnd, -consultDuration);
-        const slotEnd = baseEnd;
-
-        if (slotStart >= clampedStart && slotEnd <= clampedEnd) {
-
-          const isOccupied = consultations.some(c =>
-            isActiveConsult(c) &&
-            c.startsAt.getTime() === slotStart.getTime()
-          );
-
-          if (!isOccupied && !appointmentBlocks(slotStart, slotEnd)) {
-            results.push(new Date(slotStart));
-          }
+        if (
+          slotStart >= clampedStart &&
+          slotEnd <= clampedEnd &&
+          !appointmentBlocks(slotStart, slotEnd) &&
+          !consultOccupies(slotStart, slotEnd)
+        ) {
+          results.push(slotStart);
         }
 
         continue;
       }
 
-      // CLOSE_MAGNETIC (deterministic backward unlock)
-      if (placementMode === "CLOSE_MAGNETIC") {
-
-        const baseEnd = windowEnd;
-
-        // Build ordered possible slot starts (backwards)
-        const possibleSlots = [];
+      if (placementMode === "OPEN_MAGNETIC") {
         for (let i = 0; i <= magneticCount; i++) {
-          const slotEnd = addMinutes(baseEnd, -(i * consultDuration));
-          const slotStart = addMinutes(slotEnd, -consultDuration);
-          possibleSlots.push(slotStart);
-        }
+          const slotStart = addMinutes(windowStart, i * consultDuration);
+          const slotEnd = addMinutes(slotStart, consultDuration);
 
-        // Determine which are occupied
-        const occupied = possibleSlots.map(slotStart =>
-          consultations.some(c =>
-            isActiveConsult(c) &&
-            c.startsAt.getTime() === slotStart.getTime()
-          )
-        );
+          if (slotStart < clampedStart || slotEnd > nonConsultBoundary) break;
+          if (appointmentBlocks(slotStart, slotEnd)) break;
+          if (consultOccupies(slotStart, slotEnd)) continue;
 
-        // Determine next unlockable index
-        let nextIndex = 0;
-
-        for (let i = 0; i < occupied.length; i++) {
-          if (!occupied[i]) {
-            nextIndex = i;
-            break;
-          }
-          if (i === occupied.length - 1) {
-            nextIndex = -1; // fully consumed
-          }
-        }
-
-        if (nextIndex !== -1) {
-
-          // All previous must be occupied
-          const allPrevOccupied = occupied
-            .slice(0, nextIndex)
-            .every(Boolean);
-
-          if (allPrevOccupied) {
-
-            const slotStart = possibleSlots[nextIndex];
-            const slotEnd = addMinutes(slotStart, consultDuration);
-
-            if (
-              slotStart >= clampedStart &&
-              slotEnd <= clampedEnd &&
-              !appointmentBlocks(slotStart, slotEnd)
-            ) {
-              results.push(new Date(slotStart));
-            }
-          }
+          results.push(slotStart);
         }
 
         continue;
       }
-      
+
+      if (placementMode === "CLOSE_MAGNETIC") {
+        for (let i = 0; i <= magneticCount; i++) {
+          const slotStart = addMinutes(nonConsultBoundary, -(i + 1) * consultDuration);
+          const slotEnd = addMinutes(slotStart, consultDuration);
+
+          if (slotStart < clampedStart || slotEnd > clampedEnd) continue;
+          if (appointmentBlocks(slotStart, slotEnd)) break;
+          if (consultOccupies(slotStart, slotEnd)) continue;
+
+          results.push(slotStart);
+        }
+
+        continue;
+      }
     }
 
     dayCursor = dayCursor.plus({ days: 1 });

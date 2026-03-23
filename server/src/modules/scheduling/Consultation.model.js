@@ -29,6 +29,11 @@ const ConsultationSchema = new mongoose.Schema(
       index: true,
     },
 
+    expiresAt: {
+      type: Date,
+      index: true,
+    },
+    
     intake: {
       description: { type: String },
       preferredDate: { type: String },

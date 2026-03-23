@@ -5,9 +5,9 @@ function requireStudioRole(allowedRoles = []) {
     return async function (req, _res, next) {
         try {
             const studioId =
-              req.params.studioId || 
-              req.body.studioId || 
-              req.query.studioId;
+              req.params?.studioId ||
+              req.body?.studioId ||
+              req.query?.studioId;
 
             if (!studioId) return next(httpError(400, "Missing studioId", "STUDIO_ID_REQUIRED"));
             if (!req.user?._id) return next(httpError(401, "Authentication required", "AUTH_REQUIRED"));

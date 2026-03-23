@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 
-const appointmentRoutes = require("./modules/scheduling/appointment.routes");
+const appointmentRoutes = require("./modules/scheduling/Appointment.routes");
 const consultationStaffRoutes = require("./modules/scheduling/consultation.staff.routes");
 const consultationClientRoutes = require("./modules/scheduling/consultation.client.routes");
 const bookingRequestClientRoutes = require("./modules/scheduling/bookingRequest.client.routes");

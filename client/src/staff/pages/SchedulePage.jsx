@@ -630,7 +630,7 @@ export default function SchedulePage() {
                 Cascade Count
               </label>
               <select
-                value={consultationDraft.magneticCount}
+                value={consultationDraft.cascadeCount}
                 onChange={(e) =>
                   setConsultationDraft((prev) => ({
                     ...prev,
