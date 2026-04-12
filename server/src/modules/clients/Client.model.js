@@ -50,6 +50,14 @@ const ClientSchema = new mongoose.Schema(
         },
         // Optional, client-controlled
         address: String,
+        lastServiceIntakeAt: {
+            type: Date,
+            default: null,
+        },
+        serviceIntakeRetainUntil: {
+            type: Date,
+            default: null,
+        },
         status: {
             type: String,
             enum: ["active", "inactive"],

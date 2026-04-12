@@ -39,6 +39,23 @@ const ConsultationSchema = new mongoose.Schema(
       preferredDate: { type: String },
       travelInfo: { type: String },
       budget: { type: String },
+      imageRefs: [
+        {
+          id: { type: String },
+          name: { type: String },
+          url: { type: String },
+          kind: {
+            type: String,
+            enum: ["reference"],
+            default: "reference",
+          },
+          status: {
+            type: String,
+            enum: ["placeholder", "uploaded"],
+            default: "placeholder",
+          },
+        },
+      ],
     },
 
     status: {
@@ -63,6 +80,20 @@ const ConsultationSchema = new mongoose.Schema(
           enum: ["CLIENT", "ARTIST", "SYSTEM"],
           required: true,
         },
+        type: {
+          type: String,
+          enum: [
+            "REQUEST_CREATED",
+            "CLIENT_REQUEST",
+            "ARTIST_REPLY",
+            "REQUEST_APPROVED",
+            "REQUEST_DECLINED",
+            "CONSULTATION_CONFIRMED",
+            "APPOINTMENT_LINK_SENT",
+            "APPOINTMENT_CONFIRMED",
+          ],
+          default: "CLIENT_REQUEST",
+        },
         body: {
           type: String,
           required: true,
@@ -71,6 +102,23 @@ const ConsultationSchema = new mongoose.Schema(
           type: Boolean,
           default: true,
         },
+        imageRefs: [
+          {
+            id: { type: String },
+            name: { type: String },
+            url: { type: String },
+            kind: {
+              type: String,
+              enum: ["reference"],
+              default: "reference",
+            },
+            status: {
+              type: String,
+              enum: ["placeholder", "uploaded"],
+              default: "placeholder",
+            },
+          },
+        ],
         createdAt: {
           type: Date,
           default: Date.now,

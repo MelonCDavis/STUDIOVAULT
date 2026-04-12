@@ -11,6 +11,9 @@ export default function HelpDropdown({ onSelect, disabled }) {
       <option value="" disabled>
         Select an option...
       </option>
+
+      <option value="service-intake">Check In / Service Forms</option>
+
       <option value="consultations">Request Consultation</option>
       <option value="upcoming">View Upcoming</option>
       <option value="calendar">Open Calendar</option>

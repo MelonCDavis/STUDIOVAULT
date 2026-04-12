@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 
 const appointmentRoutes = require("./modules/scheduling/Appointment.routes");
+const appointmentInviteRoutes = require("./modules/scheduling/appointmentInvite.routes");
 const consultationStaffRoutes = require("./modules/scheduling/consultation.staff.routes");
 const consultationClientRoutes = require("./modules/scheduling/consultation.client.routes");
 const bookingRequestClientRoutes = require("./modules/scheduling/bookingRequest.client.routes");
@@ -36,6 +37,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/client", clientRoutes);
 
 app.use("/api/client", consultationClientRoutes);
+app.use("/api", appointmentInviteRoutes);
 
 app.use("/api/staff/appointments", appointmentRoutes);
 app.use("/api/client/booking-request", bookingRequestClientRoutes);

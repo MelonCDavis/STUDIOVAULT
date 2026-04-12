@@ -1,6 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const Appointment = require("./Appointment.model");
+const ClientStudioLink = require("../clients/ClientStudioLink.model");
 const { requireAuth, requireStaff } = require("../auth/auth.middleware");
 require("../clients/Client.model");
 require("./Service.model");
@@ -90,6 +91,37 @@ async function expireHeldAppointments({ studioId, artistProfileId }) {
     },
     {
       $set: { status: "CANCELLED", holdExpiresAt: null },
+    }
+  );
+}
+
+async function upsertClientStudioLink({
+  clientId,
+  studioId,
+  bookedAt,
+  session,
+}) {
+  if (!clientId || !studioId) return;
+
+  await ClientStudioLink.findOneAndUpdate(
+    {
+      clientId,
+      studioId,
+    },
+    {
+      $set: {
+        status: "active",
+        lastBookedAt: bookedAt,
+      },
+      $setOnInsert: {
+        clientId,
+        studioId,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      session,
     }
   );
 }
@@ -198,6 +230,14 @@ router.get("/", requireAuth, requireStaff, async (req, res, next) => {
 
     res.json(appointments);
   } catch (err) {
+    if (err?.status === 409 && err?.duplicate) {
+      return res.status(409).json({
+        error: err.message || "Duplicate client found",
+        duplicate: true,
+        existingClient: err.existingClient,
+      });
+    }
+
     next(err);
   }
 });
@@ -214,7 +254,9 @@ router.post("/", requireAuth, requireStaff, async (req, res, next) => {
       isAdult,
       dateOfBirth,
       clientId,
-      clientName,
+      legalName,
+      preferredName,
+      pronouns,
       phone,
       email,
       startsAt,
@@ -223,6 +265,7 @@ router.post("/", requireAuth, requireStaff, async (req, res, next) => {
       notesInternal,
       deposit,
       holdDurationHours,
+      forceCreate = false,
     } = req.body;
 
     if (typeof isAdult !== "boolean") {
@@ -274,8 +317,12 @@ router.post("/", requireAuth, requireStaff, async (req, res, next) => {
           throw e;
         }
       } else {
-        if (!clientName) {
-          const e = new Error("Client required");
+        const normalizedLegalName = (legalName || "").trim();
+        const normalizedPreferredName = (preferredName || "").trim();
+        const normalizedPronouns = (pronouns || "").trim();
+
+        if (!normalizedLegalName && !normalizedPreferredName) {
+          const e = new Error("Legal name or preferred name required");
           e.status = 400;
           throw e;
         }
@@ -289,21 +336,57 @@ router.post("/", requireAuth, requireStaff, async (req, res, next) => {
 
         const Client = require("../clients/Client.model");
 
-        const newClient = await Client.create(
-          [
-            {
-              legalName: clientName,
-              phoneE164: phone,
-              email: email,
-              isAdult,
-              dateOfBirth: isAdult ? undefined : dateOfBirth,
-              status: "active",
-            },
-          ],
-          { session }
-        );
+        const normalizedPhone = phone?.trim();
+        const normalizedEmail = email?.trim().toLowerCase();
 
-        resolvedClientId = newClient[0]._id;
+        // try phone match first
+        let existingClient = null;
+
+        if (normalizedPhone) {
+          existingClient = await Client.findOne({
+            phoneE164: normalizedPhone,
+          }).session(session);
+        }
+
+        // fallback email match
+        if (!existingClient && normalizedEmail) {
+          existingClient = await Client.findOne({
+            email: normalizedEmail,
+          }).session(session);
+        }
+
+        if (existingClient) {
+          return res.status(409).json({
+            error: "Duplicate client found",
+            duplicate: true,
+            existingClient: {
+              _id: existingClient._id,
+              legalName: existingClient.legalName || "",
+              preferredName: existingClient.preferredName || "",
+              pronouns: existingClient.pronouns || "",
+              email: existingClient.email || "",
+              phoneE164: existingClient.phoneE164 || "",
+            },
+          });
+        } else {
+          const newClient = await Client.create(
+            [
+              {
+                legalName: normalizedLegalName || normalizedPreferredName,
+                preferredName: normalizedPreferredName || undefined,
+                pronouns: normalizedPronouns || undefined,
+                phoneE164: normalizedPhone,
+                email: normalizedEmail,
+                isAdult,
+                dateOfBirth: isAdult ? undefined : dateOfBirth,
+                status: "active",
+              }
+            ],
+            { session }
+          );
+
+          resolvedClientId = newClient[0]._id;
+        }
       }
 
       // Use the already-validated/parsed dates you created earlier in POST:
@@ -355,7 +438,16 @@ router.post("/", requireAuth, requireStaff, async (req, res, next) => {
         { session }
       );
 
-      return appointmentDocs[0];
+      const createdAppointment = appointmentDocs[0];
+
+      await upsertClientStudioLink({
+        clientId: resolvedClientId,
+        studioId,
+        bookedAt: createdAppointment.startsAt,
+        session,
+      });
+
+      return createdAppointment;
     });
 
     return res.status(201).json(created);
@@ -381,7 +473,15 @@ router.patch("/:id", requireAuth, requireStaff, async (req, res, next) => {
         throw e;
       }
 
-      const { startsAt, endsAt, status, notesInternal, deposit, holdDurationHours } = req.body;
+      const {
+        startsAt,
+        endsAt,
+        status,
+        notesInternal,
+        deposit,
+        holdDurationHours,
+        clientId,
+      } = req.body;
 
       const statusNormalized = status
         ? normalizeStatus(status, existing.status)
@@ -430,6 +530,15 @@ router.patch("/:id", requireAuth, requireStaff, async (req, res, next) => {
         existing.startsAt = nextStart;
         existing.endsAt = nextEnd;
       }
+      if (clientId !== undefined) {
+        if (!isValidObjectId(clientId)) {
+          const e = new Error("Invalid clientId");
+          e.status = 400;
+          throw e;
+        }
+
+        existing.clientId = clientId;
+      }
       if (deposit !== undefined) {
         existing.deposit = deposit;
       }
@@ -470,6 +579,13 @@ router.patch("/:id", requireAuth, requireStaff, async (req, res, next) => {
       }
 
       await existing.save({ session });
+
+      await upsertClientStudioLink({
+        clientId: existing.clientId,
+        studioId: existing.studioId,
+        bookedAt: existing.startsAt,
+        session,
+      });
 
       return existing;
     });

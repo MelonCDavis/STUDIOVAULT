@@ -1,9 +1,8 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import StaffLayout from "../layout/StaffLayout";
 import RequireRole from "../../auth/RequireRole";
 import CalendarPage from "../pages/CalendarPage";
 import SchedulePage from "../pages/SchedulePage";
-import DashboardPage from "../pages/DashboardPage";
 import ClientsPage from "../pages/ClientsPage";
 import ApprovalsPage from "../pages/ApprovalsPage";
 import InspectionModePage from "../pages/InspectionModePage";
@@ -19,7 +18,7 @@ export default function StaffRoutes() {
           </RequireRole>
         }
       >
-        <Route index element={<DashboardPage />} />
+        <Route index element={<Navigate to="calendar" replace />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="schedule" element={<SchedulePage />} />
         <Route path="clients" element={<ClientsPage />} />

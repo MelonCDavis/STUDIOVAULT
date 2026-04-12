@@ -1,7 +1,7 @@
 const { DateTime } = require("luxon");
 const Appointment = require("../Appointment.model");
 const Consultation = require("../Consultation.model");
-const AvailabilityRule = require("../AvailabilityRule.model");
+const StaffSchedule = require("../StaffSchedule.model");
 const ConsultationSettings = require("../consultationSettings.model");
 
 function addMinutes(date, minutes) {
@@ -51,14 +51,19 @@ async function computeConsultationSlots({
   if (settingsStart && endDate < settingsStart) return [];
   if (settingsEnd && startDate > settingsEnd) return [];
 
-  const weeklyRules = await AvailabilityRule.find({
+  const schedule = await StaffSchedule.findOne({
     artistProfileId,
     studioId,
-    type: "WEEKLY",
-    isActive: true,
   }).lean();
 
-  if (!weeklyRules.length) return [];
+  if (!schedule) return [];
+
+  const weeklyRules = schedule.daysOfWeek.map((day) => ({
+    DayOfWeek: day,
+    startTime: schedule.startTime,
+    endTime: schedule.endTime,
+    timezone: "America/New_York",
+  }));
 
   const appointments = await Appointment.find({
     artistProfileId,

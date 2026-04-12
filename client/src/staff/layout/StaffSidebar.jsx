@@ -28,14 +28,14 @@ export default function StaffSidebar({ sidebarOpen, setSidebarOpen }) {
                     STUDIOVAULT
                 </div>
                 <nav className="flex flex-col gap-2">
-                    <NavLink
-                      to="/staff"
-                      end
-                      onClick={() => setSidebarOpen(false)}
-                      className="px-3 py-2 rounded hover:bg-neutral-800"
-                    >
-                        DASHBOARD
-                    </NavLink>
+                    <div className="px-3 py-2 rounded border border-neutral-800 bg-neutral-950">
+                        <div className="text-xs uppercase tracking-wide text-neutral-500">
+                            Dashboard
+                        </div>
+                        <div className="text-sm font-semibold text-neutral-100">
+                            Staff Portal
+                        </div>
+                    </div>
 
                     <NavLink
                       to="/staff/calendar"
@@ -81,7 +81,7 @@ export default function StaffSidebar({ sidebarOpen, setSidebarOpen }) {
                       onClick={() => setSidebarOpen(false)}
                       className="px-3 py-2 rounded hover:bg-neutral-800"
                     >
-                        InspectionMode
+                        Inspection Mode
                     </NavLink>
                 </nav>
             </div>

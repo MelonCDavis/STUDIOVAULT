@@ -9,6 +9,7 @@ import CalendarPanel from "../panels/CalendarPanel";
 import UpcomingPanel from "../panels/UpcomingPanel";
 import MessagesPanel from "../panels/MessagesPanel";
 import DocumentsPanel from "../panels/DocumentsPanel";
+import ServiceIntakePanel from "../panels/ServiceIntakePanel";
 
 export default function ClientDashboard() {
   const { token } = useAuth();
@@ -88,6 +89,9 @@ export default function ClientDashboard() {
 
       case "documents":
         return <DocumentsPanel />;
+
+      case "service-intake":
+        return <ServiceIntakePanel />;
 
       default:
         return null;
