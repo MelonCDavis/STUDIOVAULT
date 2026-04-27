@@ -9,6 +9,7 @@ const bookingRequestClientRoutes = require("./modules/scheduling/bookingRequest.
 const staffBookingRequestRoutes = require("./modules/scheduling/bookingRequest.staff.routes");
 const staffScheduleRoutes = require("./modules/scheduling/staffSchedule.routes");
 const consultationSettingsRoutes = require("./modules/scheduling/consultationSettings.routes");
+const publicRoutes = require("./modules/public/public.routes");
 
 const authRoutes = require("./modules/auth/auth.routes");
 const clientRoutes = require("./modules/clients/client.routes");
@@ -31,6 +32,9 @@ app.use(attachUser);
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
+
+/* Public Routes */
+app.use("/api/public", publicRoutes);
 
 /* Auth Routes */
 app.use("/api/auth", authRoutes);

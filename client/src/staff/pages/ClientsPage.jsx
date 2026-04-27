@@ -475,8 +475,6 @@ export default function ClientsPage() {
       setDetail(detailData);
       setDuplicateCandidateId(null); 
 
-      setSelectedClientId(duplicateData.client._id);
-
       setTimeout(() => {
         const el = document.getElementById(`client-row-${savedClient._id}`);
         el?.scrollIntoView({ block: "center", behavior: "smooth" });

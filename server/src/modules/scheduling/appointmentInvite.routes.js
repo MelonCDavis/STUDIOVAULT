@@ -6,6 +6,8 @@ const { requireAuth, requireStaff, requireClient } = require("../auth/auth.middl
 const AppointmentInvite = require("./AppointmentInvite.model");
 const Appointment = require("./Appointment.model");
 const Consultation = require("./Consultation.model");
+const Service = require("./Service.model");
+const { computeHourlySlots } = require("./availability/computeHourlySlots");
 
 const router = express.Router();
 
@@ -16,6 +18,97 @@ function isValidObjectId(id) {
 function makeToken() {
   return crypto.randomBytes(24).toString("hex");
 }
+
+function groupMagneticSlots(slots, placementMode) {
+  if (!Array.isArray(slots) || slots.length === 0) return [];
+
+  const ordered = [...slots].sort((a, b) => a - b);
+  const groups = [];
+  let current = [ordered[0]];
+
+  for (let i = 1; i < ordered.length; i += 1) {
+    const prev = ordered[i - 1];
+    const next = ordered[i];
+    const diffMinutes = (next.getTime() - prev.getTime()) / 60000;
+
+    if (diffMinutes === 15) {
+      current.push(next);
+    } else {
+      groups.push(current);
+      current = [next];
+    }
+  }
+
+  groups.push(current);
+
+  if (placementMode === "FLEXIBLE") {
+    return ordered;
+}
+
+  if (placementMode === "CLOSE_MAGNETIC") {
+    return groups.map((group) => group[group.length - 1]);
+  }
+
+  return groups.map((group) => group[0]);
+}
+
+async function getEligibleInviteSlots(invite) {
+  const rawSlots = await computeHourlySlots({
+    artistProfileId: invite.artistProfileId,
+    studioId: invite.studioId,
+    from: invite.validFrom,
+    to: invite.validUntil,
+    durationMinutes: invite.durationMinutes,
+  });
+
+  return groupMagneticSlots(rawSlots, invite.placementMode);
+}
+
+// CLIENT: get valid invite slots
+router.get(
+  "/appointment-invites/:token/slots",
+  requireAuth,
+  requireClient,
+  async (req, res, next) => {
+    try {
+      const invite = await AppointmentInvite.findOne({
+        token: req.params.token,
+      }).lean();
+
+      if (!invite) {
+        return res.status(404).json({ error: "Invite not found" });
+      }
+
+      if (String(invite.clientId) !== String(req.user.clientId)) {
+        return res.status(403).json({ error: "Invite does not belong to this client" });
+      }
+
+      if (invite.status !== "ACTIVE") {
+        return res.status(400).json({ error: "Invite is not active" });
+      }
+
+      const now = new Date();
+      if (new Date(invite.validUntil) <= now) {
+        await AppointmentInvite.updateOne(
+            { _id: invite._id },
+            { $set: { status: "EXPIRED" } }
+        );
+
+        return res.status(400).json({ error: "Invite has expired" });
+        }
+
+      const slots = await getEligibleInviteSlots(invite);
+
+      res.json({
+        placementMode: invite.placementMode,
+        durationMinutes: invite.durationMinutes,
+        slots: slots.map((slot) => slot.toISOString()),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 // STAFF: create invite
 router.post(
@@ -172,6 +265,29 @@ router.post(
       if (Number.isNaN(start.getTime())) {
         return res.status(400).json({ error: "Invalid startsAt" });
       }
+
+      const service = await Service.findById(serviceId).lean();
+
+    if (!service || service.isActive !== true) {
+    return res.status(400).json({ error: "Invalid serviceId" });
+    }
+
+    if (String(service.studioId) !== String(invite.studioId)) {
+    return res.status(400).json({ error: "Service does not belong to this studio" });
+    }
+
+    const eligibleSlots = await getEligibleInviteSlots(invite);
+    const requestedIso = start.toISOString();
+
+    const isEligible = eligibleSlots.some(
+    (slot) => slot.toISOString() === requestedIso
+    );
+
+    if (!isEligible) {
+    return res.status(400).json({
+        error: "Selected time is not valid for this invite",
+    });
+    }
 
       const end = new Date(start.getTime() + invite.durationMinutes * 60000);
 

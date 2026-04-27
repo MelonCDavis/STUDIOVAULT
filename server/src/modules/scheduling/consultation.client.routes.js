@@ -4,6 +4,7 @@ const { requireAuth, requireClient } = require("../auth/auth.middleware");
 const { computeConsultationSlots } = require("./availability/computeConsultationSlots");
 const ConsultationSettings = require("./consultationSettings.model");
 const Consultation = require("./Consultation.model");
+require("../artists/ArtistProfile.model");
 
 console.log("CONSULTATION ROUTES LOADED");
 

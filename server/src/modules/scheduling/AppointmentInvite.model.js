@@ -51,7 +51,7 @@ const AppointmentInviteSchema = new mongoose.Schema(
     },
     placementMode: {
       type: String,
-      enum: ["OPEN_MAGNETIC", "CLOSE_MAGNETIC"],
+      enum: ["OPEN_MAGNETIC", "CLOSE_MAGNETIC", "FLEXIBLE"],
       default: "OPEN_MAGNETIC",
     },
     validFrom: {

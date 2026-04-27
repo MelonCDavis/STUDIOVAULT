@@ -72,7 +72,11 @@ export default function ClientDashboard() {
         );
 
       case "consultations":
-        return <ConsultationsPanel />;
+        return (
+          <CalendarPanel
+            evaluationAppointmentId={evaluationAppointmentId}
+          />
+        );
 
       case "calendar":
         return (

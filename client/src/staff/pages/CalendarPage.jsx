@@ -375,7 +375,12 @@ export default function CalendarPage() {
               end: new Date(a.endsAt),
               status: a.status,
               uiStatus: toUiStatus(a.status),
-              clientName: a.clientId?.legalName || "",
+              clientName:
+                a.clientId?.preferredName ||
+                a.clientId?.legalName ||
+                "",
+              legalName: a.clientId?.legalName || "",
+              preferredName: a.clientId?.preferredName || "",
               phone: a.clientId?.phoneE164 || "",
               email: a.clientId?.email || "",
               service: a.serviceId?.name || "",
@@ -411,7 +416,12 @@ export default function CalendarPage() {
                 start,
                 end,
                 status: c.status,
-                clientName: c.clientId?.legalName || "",
+                clientName:
+                  c.clientId?.preferredName ||
+                  c.clientId?.legalName ||
+                  "",
+                legalName: c.clientId?.legalName || "",
+                preferredName: c.clientId?.preferredName || "",
                 phone: c.clientId?.phoneE164 || "",
                 email: c.clientId?.email || "",
                 description: c.intake?.description || "",
@@ -824,8 +834,8 @@ export default function CalendarPage() {
             start: existingBooking.start,
             hours: Math.floor((existingBooking.end - existingBooking.start) / 3600000),
             minutes: ((existingBooking.end - existingBooking.start) % 3600000) / 60000,
-            legalName: existingBooking.clientName || "",
-            preferredName: "",
+            legalName: existingBooking.legalName || existingBooking.clientName || "",
+            preferredName: existingBooking.preferredName || "",
             pronouns: "",
             phone: existingBooking.phone,
             email: existingBooking.email,
@@ -1693,8 +1703,8 @@ export default function CalendarPage() {
                                       start: b.start,
                                       hours: Math.floor((b.end - b.start) / 3600000),
                                       minutes: ((b.end - b.start) % 3600000) / 60000,
-                                      legalName: b.clientName || "",
-                                      preferredName: "",
+                                      legalName: b.legalName || b.clientName || "",
+                                      preferredName: b.preferredName || "",
                                       pronouns: "",
                                       phone: b.phone,
                                       email: b.email,
@@ -2373,12 +2383,15 @@ export default function CalendarPage() {
                                             retryPayload.dateOfBirth = bookingDraft.dateOfBirth;
                                         }
 
-                                        await apiPost("/api/staff/appointments", retryPayload);
+                                        const saved = await apiPost("/api/staff/appointments", retryPayload);
 
                                         const rangeStart = new Date(year, month, 1, 0, 0, 0, 0);
                                         const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
 
                                         await fetchAppointmentsInRange(rangeStart, rangeEnd);
+
+                                        resetClientContext();
+                                        clearCalendarLaunchState({ clearClient: true });
 
                                         openDayPanel(bookingDraft.start);
 

@@ -2,6 +2,7 @@ const { DateTime } = require("luxon");
 const Appointment = require("../Appointment.model");
 const Consultation = require("../Consultation.model");
 const StaffSchedule = require("../StaffSchedule.model");
+const AvailabilityRule = require("../AvailabilityRule.model");
 const ConsultationSettings = require("../consultationSettings.model");
 
 function addMinutes(date, minutes) {
@@ -54,16 +55,36 @@ async function computeConsultationSlots({
   const schedule = await StaffSchedule.findOne({
     artistProfileId,
     studioId,
+    workMode: "SET_SCHEDULE",
   }).lean();
 
-  if (!schedule) return [];
+  let weeklyRules = [];
 
-  const weeklyRules = schedule.daysOfWeek.map((day) => ({
-    DayOfWeek: day,
-    startTime: schedule.startTime,
-    endTime: schedule.endTime,
-    timezone: "America/New_York",
-  }));
+  if (
+    schedule &&
+    Array.isArray(schedule.daysOfWeek) &&
+    schedule.daysOfWeek.length > 0 &&
+    schedule.startTime &&
+    schedule.endTime
+  ) {
+    weeklyRules = schedule.daysOfWeek.map((day) => ({
+      DayOfWeek: day,
+      startTime: schedule.startTime,
+      endTime: schedule.endTime,
+      timezone: "America/New_York",
+      startDate: schedule.startDate,
+      endDate: schedule.endDate,
+    }));
+  } else {
+    weeklyRules = await AvailabilityRule.find({
+      artistProfileId,
+      studioId,
+      type: "WEEKLY",
+      isActive: true,
+    }).lean();
+  }
+
+  if (!weeklyRules.length) return [];
 
   const appointments = await Appointment.find({
     artistProfileId,
@@ -110,6 +131,13 @@ async function computeConsultationSlots({
         .toJSDate();
 
       if (!(windowStart < windowEnd)) continue;
+
+      const ruleStart = rule.startDate ? new Date(rule.startDate) : null;
+      const ruleEnd = rule.endDate ? new Date(rule.endDate) : null;
+
+      if (ruleStart && windowEnd < ruleStart) continue;
+      if (ruleEnd && windowStart > ruleEnd) continue;
+
       if (settingsStart && windowEnd < settingsStart) continue;
       if (settingsEnd && windowStart > settingsEnd) continue;
 

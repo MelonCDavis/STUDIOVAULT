@@ -10,7 +10,7 @@ function attachUser(req, _res, next) {
   try {
     const decoded = verifyToken(token);
     req.user = decoded;
-  } catch {
+  } catch (err) {
     console.error("attachUser token verify failed:", err.message);
   }
 

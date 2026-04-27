@@ -93,14 +93,19 @@ export default function ProfilePanel({ onComplete }) {
           className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
         />
 
-        <input
-          type="text"
+        <select
           name="pronouns"
-          placeholder="Pronouns (optional)"
           value={form.pronouns}
           onChange={handleChange}
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-        />
+          className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+        >
+          <option value="">Pronouns</option>
+          <option value="He / Him">He / Him</option>
+          <option value="She / Her">She / Her</option>
+          <option value="They / Them">They / Them</option>
+          <option value="Other">Other</option>
+          <option value="Prefer not to say">Prefer not to say</option>
+        </select>
 
         <input
           type="text"
