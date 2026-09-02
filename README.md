@@ -1,4 +1,4 @@
-# StudioVault : Tattoo & Piercing Booking Platform
+# TheBooks : Tattoo & Piercing Booking Platform
 
 Human-centered booking, consent, and compliance system
   for tattoo and piercing studios.
